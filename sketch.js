@@ -1,9 +1,7 @@
 // sketch.js
-// Needs in index.html:
-// <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
-// <script src="https://cdnjs.cloudflare.com/ajax/libs/opentype.js/1.3.4/opentype.min.js"></script>
-// <script src="sketch.js"></script>
+// Needs p5.js, paper.js, opentype.js loaded in this order.
 
+// globals
 let otFontA = null;
 let otFontB = null;
 
@@ -13,7 +11,9 @@ let trackingSlider;
 let axisModeSelect;
 let cutSlider;
 let cutLabel;
+
 let savePngBtn;
+let saveOtfBtn;
 
 let fontAStatusP;
 let fontBStatusP;
@@ -23,6 +23,10 @@ const GREEN = "#1f6a3a";
 function setup() {
   createCanvas(windowWidth, windowHeight - 220);
   noLoop();
+
+  // initialise Paper with a dummy canvas (we only use it for geometry)
+  const dummyCanvas = document.createElement("canvas");
+  paper.setup(dummyCanvas);
 
   const ui = createDiv();
   ui.style("padding", "8px");
@@ -79,7 +83,9 @@ function setup() {
   fontBStatusP.style("margin", "2px 0 0 0");
   fontBStatusP.style("color", GREEN);
 
-  const hint = createP("Preview: left/top half from A, right/bottom half from B. Clean clipping, no distortion.");
+  const hint = createP(
+    "Preview and OTF: left or top half from A, right or bottom half from B."
+  );
   hint.parent(fontsSec);
   hint.style("margin", "6px 0 0 0");
   hint.style("color", GREEN);
@@ -119,7 +125,7 @@ function setup() {
   axisModeSelect.option("Horizontal split (top/bottom)", "horizontal");
   axisModeSelect.changed(redrawCanvas);
 
-  cutLabel = createSpan("Cut position (0 = left / bottom, 100 = right / top)");
+  cutLabel = createSpan("Cut position (0 = left, 100 = right)");
   cutLabel.parent(axisSec);
 
   cutSlider = createSlider(0, 100, 50, 1);
@@ -132,6 +138,10 @@ function setup() {
   savePngBtn = createButton("Save PNG");
   savePngBtn.parent(exportSec);
   savePngBtn.mousePressed(() => saveCanvas("hybrid_preview", "png"));
+
+  saveOtfBtn = createButton("Download hybrid OTF");
+  saveOtfBtn.parent(exportSec);
+  saveOtfBtn.mousePressed(downloadHybridFont);
 }
 
 function systemFont() {
@@ -189,7 +199,7 @@ function glyphAdvance(glyph, font, fontSize) {
   return aw * (fontSize / unitsPerEm);
 }
 
-// Compute glyph bounding box in *canvas pixels* for a given font size and baseline
+// bbox in canvas pixels for preview
 function glyphBBoxPx(glyph, font, x, y, fontSize) {
   const unitsPerEm = font.unitsPerEm || 1000;
   const scale = fontSize / unitsPerEm;
@@ -203,7 +213,7 @@ function glyphBBoxPx(glyph, font, x, y, fontSize) {
   return { xMin, xMax, yMin, yMax };
 }
 
-// Draw one split glyph using clipping
+// preview: draw one split glyph using canvas clipping
 function drawSplitGlyph(ch, x, y, fontSize, mode, cutRatio) {
   const glyphA = otFontA.charToGlyph(ch);
   const glyphB = otFontB.charToGlyph(ch);
@@ -211,7 +221,6 @@ function drawSplitGlyph(ch, x, y, fontSize, mode, cutRatio) {
 
   const ctx = drawingContext;
 
-  // Union bbox so both fonts are fully covered
   const bbA = glyphBBoxPx(glyphA, otFontA, x, y, fontSize);
   const bbB = glyphBBoxPx(glyphB, otFontB, x, y, fontSize);
 
@@ -227,7 +236,7 @@ function drawSplitGlyph(ch, x, y, fontSize, mode, cutRatio) {
   if (mode === "vertical") {
     const splitX = xMin + cutRatio * w;
 
-    // Left half from A
+    // left from A
     ctx.save();
     ctx.beginPath();
     ctx.rect(xMin, yMin, splitX - xMin, h);
@@ -235,7 +244,7 @@ function drawSplitGlyph(ch, x, y, fontSize, mode, cutRatio) {
     glyphA.getPath(x, y, fontSize).draw(ctx);
     ctx.restore();
 
-    // Right half from B
+    // right from B
     ctx.save();
     ctx.beginPath();
     ctx.rect(splitX, yMin, xMax - splitX, h);
@@ -243,10 +252,9 @@ function drawSplitGlyph(ch, x, y, fontSize, mode, cutRatio) {
     glyphB.getPath(x, y, fontSize).draw(ctx);
     ctx.restore();
   } else {
-    // horizontal
     const splitY = yMax - cutRatio * h; // 0 bottom, 1 top
 
-    // Bottom from B
+    // bottom from B
     ctx.save();
     ctx.beginPath();
     ctx.rect(xMin, splitY, w, yMax - splitY);
@@ -254,7 +262,7 @@ function drawSplitGlyph(ch, x, y, fontSize, mode, cutRatio) {
     glyphB.getPath(x, y, fontSize).draw(ctx);
     ctx.restore();
 
-    // Top from A
+    // top from A
     ctx.save();
     ctx.beginPath();
     ctx.rect(xMin, yMin, w, splitY - yMin);
@@ -290,7 +298,7 @@ function draw() {
   );
 
   let x = 40;
-  let y = height * 0.75; // baseline vertically
+  let y = height * 0.75;
 
   for (let i = 0; i < txt.length; i++) {
     const ch = txt[i];
@@ -318,4 +326,224 @@ function draw() {
       y += fontSize * 1.4;
     }
   }
+}
+
+//////////////////////////////////////////////////////////////
+//  Boolean clipping for font export using Paper.js
+//////////////////////////////////////////////////////////////
+
+// convert opentype.Path -> paper.Path (in font units)
+// we keep coordinates in font space and mirror Y so that
+// preview and export are consistent
+function opentypePathToPaper(path) {
+  const p = new paper.Path();
+  const cmds = path.commands;
+  let currentPoint = null;
+
+  for (let i = 0; i < cmds.length; i++) {
+    const c = cmds[i];
+    if (c.type === "M") {
+      const pt = new paper.Point(c.x, -c.y);
+      p.moveTo(pt);
+      currentPoint = pt;
+    } else if (c.type === "L") {
+      const pt = new paper.Point(c.x, -c.y);
+      p.lineTo(pt);
+      currentPoint = pt;
+    } else if (c.type === "Q") {
+      // quadratic -> cubic approximation
+      const p0 = currentPoint;
+      const q = new paper.Point(c.x1, -c.y1);
+      const p2 = new paper.Point(c.x, -c.y);
+      const c1 = p0.add(q.subtract(p0).multiply(2 / 3));
+      const c2 = p2.add(q.subtract(p2).multiply(2 / 3));
+      p.cubicCurveTo(c1, c2, p2);
+      currentPoint = p2;
+    } else if (c.type === "C") {
+      const c1 = new paper.Point(c.x1, -c.y1);
+      const c2 = new paper.Point(c.x2, -c.y2);
+      const p2 = new paper.Point(c.x, -c.y);
+      p.cubicCurveTo(c1, c2, p2);
+      currentPoint = p2;
+    } else if (c.type === "Z") {
+      p.closePath();
+    }
+  }
+
+  p.closed = true;
+  p.fillColor = new paper.Color("black");
+  return p;
+}
+
+// convert paper.Path -> opentype.Path with cubic curves
+function paperPathToOpenType(path) {
+  const otPath = new opentype.Path();
+  const segs = path.segments;
+  if (!segs.length) return otPath;
+
+  let first = segs[0];
+  otPath.moveTo(first.point.x, -first.point.y);
+
+  for (let i = 1; i < segs.length; i++) {
+    const prev = segs[i - 1];
+    const cur = segs[i];
+
+    const p0 = prev.point;
+    const p1 = cur.point;
+    const h0 = prev.handleOut;
+    const h1 = cur.handleIn;
+
+    const hasCurve = !h0.isZero() || !h1.isZero();
+
+    if (hasCurve) {
+      const c1 = p0.add(h0);
+      const c2 = p1.add(h1);
+      otPath.curveTo(
+        c1.x, -c1.y,
+        c2.x, -c2.y,
+        p1.x, -p1.y
+      );
+    } else {
+      otPath.lineTo(p1.x, -p1.y);
+    }
+  }
+
+  if (path.closed) {
+    otPath.close();
+  }
+
+  return otPath;
+}
+
+// build one hybrid glyph in font units using Paper boolean ops
+function buildHybridGlyph(unicode, mode, cutRatio, baseUnits) {
+  const ch = String.fromCharCode(unicode);
+  const gA = otFontA.charToGlyph(ch);
+  const gB = otFontB.charToGlyph(ch);
+
+  // if one missing, copy from the other
+  if (!gA && !gB) return null;
+  if (!gA && gB) return gB;
+  if (gA && !gB) return gA;
+
+  // bounding boxes in font units
+  const bbA = gA.getBoundingBox();
+  const bbB = gB.getBoundingBox();
+  const x1 = Math.min(bbA.x1, bbB.x1);
+  const y1 = Math.min(bbA.y1, bbB.y1);
+  const x2 = Math.max(bbA.x2, bbB.x2);
+  const y2 = Math.max(bbA.y2, bbB.y2);
+
+  const w = x2 - x1;
+  const h = y2 - y1;
+
+  let rectA;
+  let rectB;
+
+  if (mode === "vertical") {
+    const splitX = x1 + cutRatio * w;
+    rectA = new paper.Path.Rectangle(
+      new paper.Rectangle(
+        new paper.Point(x1, -y2),
+        new paper.Point(splitX, -y1)
+      )
+    );
+    rectB = new paper.Path.Rectangle(
+      new paper.Rectangle(
+        new paper.Point(splitX, -y2),
+        new paper.Point(x2, -y1)
+      )
+    );
+  } else {
+    const splitY = y1 + cutRatio * h; // 0 bottom, 1 top
+    // top rectangle for A
+    rectA = new paper.Path.Rectangle(
+      new paper.Rectangle(
+        new paper.Point(x1, -y2),
+        new paper.Point(x2, -splitY)
+      )
+    );
+    // bottom rectangle for B
+    rectB = new paper.Path.Rectangle(
+      new paper.Rectangle(
+        new paper.Point(x1, -splitY),
+        new paper.Point(x2, -y1)
+      )
+    );
+  }
+
+  rectA.closed = true;
+  rectB.closed = true;
+
+  const pathAFull = opentypePathToPaper(gA.getPath(0, 0, baseUnits));
+  const pathBFull = opentypePathToPaper(gB.getPath(0, 0, baseUnits));
+
+  const pieceA = pathAFull.intersect(rectA);
+  const pieceB = pathBFull.intersect(rectB);
+
+  // union of both pieces
+  const hybridShape = pieceA.unite(pieceB);
+
+  // clean up temporaries
+  pathAFull.remove();
+  pathBFull.remove();
+  rectA.remove();
+  rectB.remove();
+  pieceA.remove();
+  pieceB.remove();
+
+  const otPath = paperPathToOpenType(hybridShape);
+  hybridShape.remove();
+
+  const advA = gA.advanceWidth || baseUnits;
+  const advB = gB.advanceWidth || baseUnits;
+  const adv = (advA + advB) * 0.5;
+
+  return new opentype.Glyph({
+    name: gA.name || gB.name,
+    unicode: unicode,
+    advanceWidth: adv,
+    path: otPath
+  });
+}
+
+// build and download HybridFont.otf
+function downloadHybridFont() {
+  if (!otFontA || !otFontB) {
+    alert("Load both Font A and Font B first.");
+    return;
+  }
+
+  const mode = axisModeSelect ? axisModeSelect.value() : "vertical";
+  const cutRatio = (cutSlider ? cutSlider.value() : 50) / 100;
+  const unitsPerEm = otFontA.unitsPerEm || 1000;
+
+  const glyphs = [];
+
+  // simple ASCII range, you can extend if you want
+  for (let u = 32; u <= 126; u++) {
+    const hybridGlyph = buildHybridGlyph(u, mode, cutRatio, unitsPerEm);
+    if (hybridGlyph) glyphs.push(hybridGlyph);
+  }
+
+  const font = new opentype.Font({
+    familyName: "HybridFont",
+    styleName: "Regular",
+    unitsPerEm: unitsPerEm,
+    ascender: otFontA.ascender,
+    descender: otFontA.descender,
+    glyphs: glyphs
+  });
+
+  const arrayBuffer = font.toArrayBuffer();
+  const blob = new Blob([arrayBuffer], { type: "font/otf" });
+  const url = URL.createObjectURL(blob);
+
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "HybridFont.otf";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
