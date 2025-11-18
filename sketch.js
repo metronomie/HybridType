@@ -1,21 +1,12 @@
 // ----------------------------------------------------------
-// HYBRID FONT POSTER TOOL
+// HYBRID FONT POSTER TOOL - ZOOM + HEX COLORS + SIDE SWAP
 // p5.js + opentype.js
-// - hybrid split letters (A/B)
-// - per-font scale + offset
-// - outline (thickness, roundness, blur)
-// - poster format controls
-// - paragraphs with line height + orientation
-// - text alignment: left / center / right
-// - background color / gradient / image
-// - simple split animation
-// - UI as left column, poster canvas on the right
 // ----------------------------------------------------------
 
 let otFontA = null;
 let otFontB = null;
 
-// UI
+// UI globals
 let textInput;
 let sizeSlider, trackingSlider;
 let axisModeSelect, cutSlider, cutLabel;
@@ -26,11 +17,13 @@ let outlineWidthSlider, outlineRoundSlider, outlineBlurSlider;
 
 let canvasWidthInput, canvasHeightInput, applyFormatButton;
 let lineHeightSlider, orientationSelect, alignSelect;
+let zoomSlider;
 
 let bgModeSelect, bgColor1Picker, bgColor2Picker, bgImageInput;
 let bgImg = null;
 
 let animateCheckbox, animSpeedSlider, animAmplitudeSlider;
+let alternateSideCheckbox, alternateSideSpeedSlider;
 
 let posterWidth, posterHeight;
 
@@ -43,7 +36,7 @@ function setup() {
   posterWidth = windowWidth * 0.7;
   posterHeight = windowHeight - 20;
 
-  // Main layout container: UI left, canvas right
+  // Main layout: left UI, right canvas
   const main = createDiv();
   main.style("display", "flex");
   main.style("flex-direction", "row");
@@ -51,7 +44,7 @@ function setup() {
   main.style("margin", "0");
   main.style("padding", "0");
 
-  // Left sidebar for UI
+  // Left sidebar UI
   const ui = createDiv();
   ui.parent(main);
   ui.style("padding", "8px");
@@ -66,7 +59,7 @@ function setup() {
   ui.style("gap", "16px");
   ui.style("border-right", "1px solid #dddddd");
 
-  // Canvas holder on the right
+  // Canvas holder
   const canvasHolder = createDiv();
   canvasHolder.parent(main);
   canvasHolder.style("flex", "1 1 auto");
@@ -99,9 +92,7 @@ function setup() {
     return s;
   }
 
-  // --------------------------------------------------------
-  // FORMAT / POSTER SECTION
-  // --------------------------------------------------------
+  // ----------------- FORMAT / POSTER SECTION -----------------
   const formatSec = section("Poster format");
 
   const formatRow = createDiv();
@@ -158,14 +149,16 @@ function setup() {
   alignSelect.changed(redrawCanvas);
 
   formatSec.child(createSpan("Line height (can be negative)"));
-  // allow weird and negative values for overlapping lines
   lineHeightSlider = createSlider(-1.5, 3.0, 1.4, 0.05);
   lineHeightSlider.parent(formatSec);
   lineHeightSlider.input(redrawCanvas);
 
-  // --------------------------------------------------------
-  // FONT SECTION
-  // --------------------------------------------------------
+  formatSec.child(createSpan("Zoom (0.25 - 3)"));
+  zoomSlider = createSlider(0.25, 3.0, 1.0, 0.01);
+  zoomSlider.parent(formatSec);
+  zoomSlider.input(redrawCanvas);
+
+  // ----------------- FONT SECTION -----------------
   const fontsSec = section("Fonts");
 
   fontsSec.child(createSpan("Font A"));
@@ -185,19 +178,16 @@ function setup() {
   fontBStatusP.style("margin", "2px 0 0 0");
 
   const hint = createP(
-    "Hybrid per glyph: left/top from A, right/bottom from B. Combine with layout, background and animation."
+    "Hybrid per glyph: left/top from A, right/bottom from B. Combine with layout, background, animation."
   );
   hint.parent(fontsSec);
   hint.style("margin", "6px 0 0 0");
   hint.style("font-size", "11px");
 
-  // --------------------------------------------------------
-  // TEXT SECTION (PARAGRAPHS)
-// --------------------------------------------------------
+  // ----------------- TEXT SECTION -----------------
   const textSec = section("Text");
 
-  const textLabel = createSpan("Text (paragraphs, Enter for new lines)");
-  textLabel.parent(textSec);
+  textSec.child(createSpan("Text (paragraphs, Enter for new lines)"));
 
   textInput = createElement("textarea");
   textInput.parent(textSec);
@@ -220,9 +210,7 @@ function setup() {
   trackingSlider.parent(textSec);
   trackingSlider.input(redrawCanvas);
 
-  // --------------------------------------------------------
-  // SPLIT SECTION
-  // --------------------------------------------------------
+  // ----------------- SPLIT SECTION -----------------
   const splitSec = section("Split inside glyph");
 
   const modeRow = createDiv();
@@ -245,47 +233,39 @@ function setup() {
   cutSlider.parent(splitSec);
   cutSlider.input(redrawCanvas);
 
-  // --------------------------------------------------------
-  // FONT TRANSFORMS
-  // --------------------------------------------------------
+  // ----------------- FONT TRANSFORMS -----------------
   const transASec = section("Font A transform");
-  transASec.child(createSpan("Size A (50-150%)"));
+  transASec.child(createSpan("Size A (50 - 150 %)"));
   scaleASlider = createSlider(50, 150, 100, 1);
   scaleASlider.parent(transASec);
   scaleASlider.input(redrawCanvas);
 
-  transASec.child(createSpan("Horizontal offset A (-30%..+30% base size)"));
+  transASec.child(createSpan("Horizontal offset A (-30 % .. +30 % base size)"));
   offsetASlider = createSlider(-30, 30, 0, 1);
   offsetASlider.parent(transASec);
   offsetASlider.input(redrawCanvas);
 
   const transBSec = section("Font B transform");
-  transBSec.child(createSpan("Size B (50-150%)"));
+  transBSec.child(createSpan("Size B (50 - 150 %)"));
   scaleBSlider = createSlider(50, 150, 100, 1);
   scaleBSlider.parent(transBSec);
   scaleBSlider.input(redrawCanvas);
 
-  transBSec.child(createSpan("Horizontal offset B (-30%..+30% base size)"));
+  transBSec.child(createSpan("Horizontal offset B (-30 % .. +30 % base size)"));
   offsetBSlider = createSlider(-30, 30, 0, 1);
   offsetBSlider.parent(transBSec);
   offsetBSlider.input(redrawCanvas);
 
-  // --------------------------------------------------------
-  // STYLING (FILL + OUTLINE)
-// --------------------------------------------------------
+  // ----------------- STYLING (FILL + OUTLINE) -----------------
   const styleSec = section("Styling");
 
-  styleSec.child(createSpan("Fill color"));
-  fillPicker = createColorPicker(DEFAULT_GREEN);
-  fillPicker.parent(styleSec);
-  fillPicker.input(redrawCanvas);
+  const fillControl = addColorControl(styleSec, "Fill", DEFAULT_GREEN, redrawCanvas);
+  fillPicker = fillControl.picker;
 
-  styleSec.child(createSpan("Outline color"));
-  outlinePicker = createColorPicker("#000000");
-  outlinePicker.parent(styleSec);
-  outlinePicker.input(redrawCanvas);
+  const outlineControl = addColorControl(styleSec, "Outline", "#000000", redrawCanvas);
+  outlinePicker = outlineControl.picker;
 
-  styleSec.child(createSpan("Outline thickness (0-40 px)"));
+  styleSec.child(createSpan("Outline thickness (0 - 40 px)"));
   outlineWidthSlider = createSlider(0, 40, 6, 1);
   outlineWidthSlider.parent(styleSec);
   outlineWidthSlider.input(redrawCanvas);
@@ -295,14 +275,12 @@ function setup() {
   outlineRoundSlider.parent(styleSec);
   outlineRoundSlider.input(redrawCanvas);
 
-  styleSec.child(createSpan("Outline blurriness / glow (0-20)"));
+  styleSec.child(createSpan("Outline blurriness / glow (0 - 20)"));
   outlineBlurSlider = createSlider(0, 20, 0, 1);
   outlineBlurSlider.parent(styleSec);
   outlineBlurSlider.input(redrawCanvas);
 
-  // --------------------------------------------------------
-  // BACKGROUND SECTION
-  // --------------------------------------------------------
+  // ----------------- BACKGROUND SECTION -----------------
   const bgSec = section("Background");
 
   const bgModeRow = createDiv();
@@ -319,42 +297,43 @@ function setup() {
   bgModeSelect.option("Image", "image");
   bgModeSelect.changed(redrawCanvas);
 
-  bgSec.child(createSpan("Color 1"));
-  bgColor1Picker = createColorPicker("#ffffff");
-  bgColor1Picker.parent(bgSec);
-  bgColor1Picker.input(redrawCanvas);
+  const bg1Control = addColorControl(bgSec, "Color 1", "#ffffff", redrawCanvas);
+  bgColor1Picker = bg1Control.picker;
 
-  bgSec.child(createSpan("Color 2 (for gradient)"));
-  bgColor2Picker = createColorPicker("#cccccc");
-  bgColor2Picker.parent(bgSec);
-  bgColor2Picker.input(redrawCanvas);
+  const bg2Control = addColorControl(bgSec, "Color 2", "#cccccc", redrawCanvas);
+  bgColor2Picker = bg2Control.picker;
 
   bgSec.child(createSpan("Background image"));
   bgImageInput = createFileInput(handleBgImageFile);
   bgImageInput.parent(bgSec);
 
-  // --------------------------------------------------------
-  // ANIMATION SECTION
-  // --------------------------------------------------------
+  // ----------------- ANIMATION SECTION -----------------
   const animSec = section("Animation");
 
-  animateCheckbox = createCheckbox("Animate split", false);
+  animateCheckbox = createCheckbox("Animate cut", false);
   animateCheckbox.parent(animSec);
   animateCheckbox.changed(handleAnimationState);
 
-  animSec.child(createSpan("Speed"));
+  animSec.child(createSpan("Cut speed"));
   animSpeedSlider = createSlider(0.1, 3.0, 1.0, 0.05);
   animSpeedSlider.parent(animSec);
   animSpeedSlider.input(redrawCanvas);
 
-  animSec.child(createSpan("Amplitude (0-0.5 of range)"));
+  animSec.child(createSpan("Cut amplitude (0 - 0.5)"));
   animAmplitudeSlider = createSlider(0.0, 0.5, 0.15, 0.01);
   animAmplitudeSlider.parent(animSec);
   animAmplitudeSlider.input(redrawCanvas);
 
-  // --------------------------------------------------------
-  // EXPORT
-  // --------------------------------------------------------
+  alternateSideCheckbox = createCheckbox("Alternate font side", false);
+  alternateSideCheckbox.parent(animSec);
+  alternateSideCheckbox.changed(handleAnimationState);
+
+  animSec.child(createSpan("Side swap speed"));
+  alternateSideSpeedSlider = createSlider(0.1, 5.0, 1.0, 0.05);
+  alternateSideSpeedSlider.parent(animSec);
+  alternateSideSpeedSlider.input(redrawCanvas);
+
+  // ----------------- EXPORT -----------------
   const exportSec = section("Export");
   const savePngBtn = createButton("Save PNG frame");
   savePngBtn.parent(exportSec);
@@ -364,10 +343,47 @@ function setup() {
 }
 
 // ----------------------------------------------------------
-// BASIC HELPERS
+// UI HELPERS
 // ----------------------------------------------------------
 function systemFont() {
   return "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+}
+
+// color picker + hex text input
+function addColorControl(parent, labelText, defaultColor, onChange) {
+  const row = createDiv();
+  row.parent(parent);
+  row.style("display", "flex");
+  row.style("gap", "4px");
+  row.style("align-items", "center");
+
+  const label = createSpan(labelText);
+  label.parent(row);
+
+  const picker = createColorPicker(defaultColor);
+  picker.parent(row);
+
+  const hexInput = createInput(defaultColor);
+  hexInput.parent(row);
+  hexInput.style("width", "70px");
+  hexInput.attribute("maxlength", "7");
+
+  picker.input(() => {
+    hexInput.value(picker.value());
+    if (onChange) onChange();
+  });
+
+  hexInput.input(() => {
+    let v = hexInput.value().trim();
+    if (v[0] !== "#") v = "#" + v;
+    const ok = /^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$/.test(v);
+    if (ok) {
+      picker.value(v);
+      if (onChange) onChange();
+    }
+  });
+
+  return { picker, hexInput };
 }
 
 function applyFormat() {
@@ -382,7 +398,8 @@ function applyFormat() {
 }
 
 function handleAnimationState() {
-  if (animateCheckbox.checked()) {
+  if ((animateCheckbox && animateCheckbox.checked()) ||
+      (alternateSideCheckbox && alternateSideCheckbox.checked())) {
     loop();
   } else {
     noLoop();
@@ -391,7 +408,7 @@ function handleAnimationState() {
 }
 
 function windowResized() {
-  // Do not auto-resize poster, format is manual
+  // format is manual
 }
 
 function redrawCanvas() {
@@ -464,7 +481,7 @@ function unionBBoxPx(glyphA, glyphB, xBase, yBase, sizeA, sizeB, offA, offB) {
 }
 
 // ----------------------------------------------------------
-// PATH REPLAY (we control stroke + join)
+// PATH REPLAY
 // ----------------------------------------------------------
 function tracePathOnContext(ctx, path) {
   ctx.beginPath();
@@ -486,7 +503,7 @@ function tracePathOnContext(ctx, path) {
 }
 
 // ----------------------------------------------------------
-// DRAW ONE HYBRID GLYPH (outer-only outline)
+// DRAW ONE HYBRID GLYPH (outer-only outline) with side swap
 // ----------------------------------------------------------
 function drawSplitGlyph(
   ch,
@@ -499,7 +516,8 @@ function drawSplitGlyph(
   outlineColor,
   outlineWidth,
   joinType,
-  blurAmount
+  blurAmount,
+  swapSides
 ) {
   const gA = otFontA.charToGlyph(ch);
   const gB = otFontB.charToGlyph(ch);
@@ -525,7 +543,7 @@ function drawSplitGlyph(
   const pathB = gB.getPath(xBase + offB, yBase, sizeB);
 
   function drawHalf(path, rx, ry, rw, rh) {
-    // Stroke pass
+    // stroke first
     if (outlineWidth > 0) {
       ctx.save();
       ctx.beginPath();
@@ -547,7 +565,7 @@ function drawSplitGlyph(
       ctx.restore();
     }
 
-    // Fill pass on top (hides inner stroke)
+    // fill on top
     ctx.save();
     ctx.beginPath();
     ctx.rect(rx, ry, rw, rh);
@@ -568,13 +586,21 @@ function drawSplitGlyph(
     const leftY = yMin - pad;
     const leftW = (splitX - xMin) + pad;
     const leftH = h + 2 * pad;
-    drawHalf(pathA, leftX, leftY, leftW, leftH);
 
     const rightX = splitX;
     const rightY = yMin - pad;
     const rightW = (xMax + pad) - splitX;
     const rightH = h + 2 * pad;
-    drawHalf(pathB, rightX, rightY, rightW, rightH);
+
+    if (!swapSides) {
+      // A left, B right
+      drawHalf(pathA, leftX, leftY, leftW, leftH);
+      drawHalf(pathB, rightX, rightY, rightW, rightH);
+    } else {
+      // B left, A right
+      drawHalf(pathB, leftX, leftY, leftW, leftH);
+      drawHalf(pathA, rightX, rightY, rightW, rightH);
+    }
   } else {
     const splitY = yMax - cutRatio * h;
 
@@ -582,13 +608,21 @@ function drawSplitGlyph(
     const bottomY = splitY;
     const bottomW = (xMax - xMin) + 2 * pad;
     const bottomH = (yMax + pad) - splitY;
-    drawHalf(pathB, bottomX, bottomY, bottomW, bottomH);
 
     const topX = xMin - pad;
     const topY = yMin - pad;
     const topW = (xMax - xMin) + 2 * pad;
     const topH = (splitY - yMin) + pad;
-    drawHalf(pathA, topX, topY, topW, topH);
+
+    if (!swapSides) {
+      // B bottom, A top
+      drawHalf(pathB, bottomX, bottomY, bottomW, bottomH);
+      drawHalf(pathA, topX, topY, topW, topH);
+    } else {
+      // A bottom, B top
+      drawHalf(pathA, bottomX, bottomY, bottomW, bottomH);
+      drawHalf(pathB, topX, topY, topW, topH);
+    }
   }
 }
 
@@ -626,12 +660,14 @@ function drawBackground() {
       rect(0, y, width, 3);
     }
   } else {
-    background(bgColor1Picker.value());
+    noStroke();
+    fill(bgColor1Picker.value());
+    rect(0, 0, width, height);
   }
 }
 
 // ----------------------------------------------------------
-// HORIZONTAL LAYOUT WITH ALIGNMENT
+// LINE SHAPING FOR HORIZONTAL TEXT (ALIGNMENT)
 // ----------------------------------------------------------
 function shapeLinesHorizontal(txt, baseSize, tracking, margin) {
   const lines = [];
@@ -662,13 +698,10 @@ function shapeLinesHorizontal(txt, baseSize, tracking, margin) {
     const adv = (advA + advB) * 0.5;
 
     if (current.length === 0) {
-      // first in line
-      if (adv > maxWidth && current === "") {
-        // absurdly wide glyph: put it alone
+      if (adv > maxWidth) {
         current = ch;
         currentWidth = adv;
         pushLine();
-        continue;
       } else {
         current = ch;
         currentWidth = adv;
@@ -697,6 +730,14 @@ function shapeLinesHorizontal(txt, baseSize, tracking, margin) {
 // MAIN DRAW
 // ----------------------------------------------------------
 function draw() {
+  clear();
+
+  const z = zoomSlider ? zoomSlider.value() : 1;
+  push();
+  translate(width / 2, height / 2);
+  scale(z);
+  translate(-width / 2, -height / 2);
+
   drawBackground();
 
   if (!otFontA || !otFontB) {
@@ -705,6 +746,7 @@ function draw() {
     textSize(16);
     textFont(systemFont());
     text("Load Font A and Font B to start.", 40, 60);
+    pop();
     pop();
     return;
   }
@@ -719,11 +761,18 @@ function draw() {
   // Animated cut
   let baseCut = cutSlider.value() / 100;
   let cutRatio = baseCut;
-  if (animateCheckbox.checked()) {
+  if (animateCheckbox && animateCheckbox.checked()) {
     const t = millis() * 0.001 * animSpeedSlider.value();
     const amp = animAmplitudeSlider.value();
     const delta = Math.sin(t) * amp;
     cutRatio = constrain(baseCut + delta, 0.0, 1.0);
+  }
+
+  // Animated font side swap
+  let swapSidesGlobal = false;
+  if (alternateSideCheckbox && alternateSideCheckbox.checked()) {
+    const t2 = millis() * 0.001 * alternateSideSpeedSlider.value();
+    swapSidesGlobal = Math.sin(t2) > 0;
   }
 
   const mode = axisModeSelect.value();
@@ -752,8 +801,8 @@ function draw() {
     for (let li = 0; li < shaped.length; li++) {
       const line = shaped[li];
       let x;
-
       const maxWidth = width - 2 * margin;
+
       if (alignMode === "left") {
         x = margin;
       } else if (alignMode === "center") {
@@ -779,7 +828,8 @@ function draw() {
           outlineColor,
           outlineWidth,
           joinType,
-          blurAmount
+          blurAmount,
+          swapSidesGlobal
         );
 
         const advA = glyphAdvance(gA, otFontA, baseSize);
@@ -792,7 +842,7 @@ function draw() {
       y += baseSize * lineH;
     }
   } else {
-    // Vertical text flow: top to bottom, multiple columns
+    // vertical text flow
     let xStart;
     if (alignMode === "left") {
       xStart = baseSize * 0.6;
@@ -829,7 +879,8 @@ function draw() {
         outlineColor,
         outlineWidth,
         joinType,
-        blurAmount
+        blurAmount,
+        swapSidesGlobal
       );
 
       y += baseSize * lineH;
@@ -840,4 +891,6 @@ function draw() {
       }
     }
   }
+
+  pop(); // zoom transform
 }
