@@ -6,8 +6,10 @@
 // - outline (thickness, roundness, blur)
 // - poster format controls
 // - paragraphs with line height + orientation
+// - text alignment: left / center / right
 // - background color / gradient / image
 // - simple split animation
+// - UI as left column, poster canvas on the right
 // ----------------------------------------------------------
 
 let otFontA = null;
@@ -23,7 +25,7 @@ let fillPicker, outlinePicker;
 let outlineWidthSlider, outlineRoundSlider, outlineBlurSlider;
 
 let canvasWidthInput, canvasHeightInput, applyFormatButton;
-let lineHeightSlider, orientationSelect;
+let lineHeightSlider, orientationSelect, alignSelect;
 
 let bgModeSelect, bgColor1Picker, bgColor2Picker, bgImageInput;
 let bgImg = null;
@@ -38,30 +40,53 @@ const DEFAULT_GREEN = "#1f6a3a";
 // SETUP
 // ----------------------------------------------------------
 function setup() {
-  posterWidth = windowWidth;
-  posterHeight = windowHeight - 260;
+  posterWidth = windowWidth * 0.7;
+  posterHeight = windowHeight - 20;
 
-  createCanvas(posterWidth, posterHeight);
-  noLoop();
+  // Main layout container: UI left, canvas right
+  const main = createDiv();
+  main.style("display", "flex");
+  main.style("flex-direction", "row");
+  main.style("align-items", "flex-start");
+  main.style("margin", "0");
+  main.style("padding", "0");
 
+  // Left sidebar for UI
   const ui = createDiv();
+  ui.parent(main);
   ui.style("padding", "8px");
+  ui.style("width", "360px");
+  ui.style("box-sizing", "border-box");
   ui.style("font-family", systemFont());
   ui.style("font-size", "12px");
   ui.style("color", DEFAULT_GREEN);
   ui.style("background", "#ffffff");
   ui.style("display", "flex");
-  ui.style("flex-wrap", "wrap");
+  ui.style("flex-direction", "column");
   ui.style("gap", "16px");
+  ui.style("border-right", "1px solid #dddddd");
+
+  // Canvas holder on the right
+  const canvasHolder = createDiv();
+  canvasHolder.parent(main);
+  canvasHolder.style("flex", "1 1 auto");
+  canvasHolder.style("display", "flex");
+  canvasHolder.style("align-items", "center");
+  canvasHolder.style("justify-content", "center");
+  canvasHolder.style("background", "#f5f5f5");
+
+  const cnv = createCanvas(posterWidth, posterHeight);
+  cnv.parent(canvasHolder);
+  noLoop();
 
   function section(title) {
     const s = createDiv();
     s.parent(ui);
-    s.style("min-width", "250px");
-    s.style("max-width", "380px");
     s.style("display", "flex");
     s.style("flex-direction", "column");
     s.style("gap", "4px");
+    s.style("padding", "6px 0");
+    s.style("border-bottom", "1px solid #e0e0e0");
 
     const h = createElement("h2", title);
     h.parent(s);
@@ -84,40 +109,57 @@ function setup() {
   formatRow.style("display", "flex");
   formatRow.style("gap", "6px");
   formatRow.style("align-items", "center");
+  formatRow.child(createSpan("Size"));
 
-  const wLabel = createSpan("Width (px)");
+  const wLabel = createSpan("W");
   wLabel.parent(formatRow);
-  canvasWidthInput = createInput(posterWidth.toString());
+  canvasWidthInput = createInput(int(posterWidth).toString());
   canvasWidthInput.parent(formatRow);
   canvasWidthInput.attribute("type", "number");
-  canvasWidthInput.style("width", "80px");
+  canvasWidthInput.style("width", "70px");
 
-  const hLabel = createSpan("Height (px)");
+  const hLabel = createSpan("H");
   hLabel.parent(formatRow);
-  canvasHeightInput = createInput(posterHeight.toString());
+  canvasHeightInput = createInput(int(posterHeight).toString());
   canvasHeightInput.parent(formatRow);
   canvasHeightInput.attribute("type", "number");
-  canvasHeightInput.style("width", "80px");
+  canvasHeightInput.style("width", "70px");
 
-  applyFormatButton = createButton("Apply format");
+  applyFormatButton = createButton("Apply");
   applyFormatButton.parent(formatSec);
   applyFormatButton.mousePressed(applyFormat);
 
+  // Orientation and alignment
   const orientRow = createDiv();
   orientRow.parent(formatSec);
   orientRow.style("display", "flex");
   orientRow.style("gap", "6px");
   orientRow.style("align-items", "center");
-  orientRow.child(createSpan("Text orientation"));
+  orientRow.child(createSpan("Orientation"));
 
   orientationSelect = createSelect();
   orientationSelect.parent(orientRow);
-  orientationSelect.option("Horizontal (left → right)", "horizontal");
-  orientationSelect.option("Vertical (top → bottom columns)", "vertical");
+  orientationSelect.option("Horizontal", "horizontal");
+  orientationSelect.option("Vertical", "vertical");
   orientationSelect.changed(redrawCanvas);
 
-  formatSec.child(createSpan("Line height multiplier"));
-  lineHeightSlider = createSlider(0.8, 2.5, 1.4, 0.05);
+  const alignRow = createDiv();
+  alignRow.parent(formatSec);
+  alignRow.style("display", "flex");
+  alignRow.style("gap", "6px");
+  alignRow.style("align-items", "center");
+  alignRow.child(createSpan("Align"));
+
+  alignSelect = createSelect();
+  alignSelect.parent(alignRow);
+  alignSelect.option("Left", "left");
+  alignSelect.option("Center", "center");
+  alignSelect.option("Right", "right");
+  alignSelect.changed(redrawCanvas);
+
+  formatSec.child(createSpan("Line height (can be negative)"));
+  // allow weird and negative values for overlapping lines
+  lineHeightSlider = createSlider(-1.5, 3.0, 1.4, 0.05);
   lineHeightSlider.parent(formatSec);
   lineHeightSlider.input(redrawCanvas);
 
@@ -136,12 +178,14 @@ function setup() {
 
   fontAStatusP = createP("Font A: none");
   fontAStatusP.parent(fontsSec);
+  fontAStatusP.style("margin", "4px 0 0 0");
 
   fontBStatusP = createP("Font B: none");
   fontBStatusP.parent(fontsSec);
+  fontBStatusP.style("margin", "2px 0 0 0");
 
   const hint = createP(
-    "Hybrid preview: A/B split per glyph. Use text, layout, and background to design animated posters."
+    "Hybrid per glyph: left/top from A, right/bottom from B. Combine with layout, background and animation."
   );
   hint.parent(fontsSec);
   hint.style("margin", "6px 0 0 0");
@@ -152,7 +196,7 @@ function setup() {
 // --------------------------------------------------------
   const textSec = section("Text");
 
-  const textLabel = createSpan("Text (paragraphs, use Enter for new lines)");
+  const textLabel = createSpan("Text (paragraphs, Enter for new lines)");
   textLabel.parent(textSec);
 
   textInput = createElement("textarea");
@@ -166,18 +210,14 @@ function setup() {
   textInput.value("BFD\nHybrid type posters\nare fun.");
   textInput.input(redrawCanvas);
 
-  const sizeRow = createDiv();
-  sizeRow.parent(textSec);
-  sizeRow.child(createSpan("Base font size"));
+  textSec.child(createSpan("Base font size"));
   sizeSlider = createSlider(32, 400, 200, 1);
-  sizeSlider.parent(sizeRow);
+  sizeSlider.parent(textSec);
   sizeSlider.input(redrawCanvas);
 
-  const trackRow = createDiv();
-  trackRow.parent(textSec);
-  trackRow.child(createSpan("Tracking (letter spacing)"));
+  textSec.child(createSpan("Tracking (letter spacing)"));
   trackingSlider = createSlider(-40, 120, 10, 1);
-  trackingSlider.parent(trackRow);
+  trackingSlider.parent(textSec);
   trackingSlider.input(redrawCanvas);
 
   // --------------------------------------------------------
@@ -187,12 +227,15 @@ function setup() {
 
   const modeRow = createDiv();
   modeRow.parent(splitSec);
+  modeRow.style("display", "flex");
+  modeRow.style("gap", "6px");
+  modeRow.style("align-items", "center");
   modeRow.child(createSpan("Mode"));
 
   axisModeSelect = createSelect();
   axisModeSelect.parent(modeRow);
-  axisModeSelect.option("Vertical split (left/right)", "vertical");
-  axisModeSelect.option("Horizontal split (top/bottom)", "horizontal");
+  axisModeSelect.option("Vertical (left/right)", "vertical");
+  axisModeSelect.option("Horizontal (top/bottom)", "horizontal");
   axisModeSelect.changed(redrawCanvas);
 
   cutLabel = createSpan("Cut position (0 = left, 100 = right)");
@@ -206,29 +249,29 @@ function setup() {
   // FONT TRANSFORMS
   // --------------------------------------------------------
   const transASec = section("Font A transform");
-  transASec.child(createSpan("Size A (50–150%)"));
+  transASec.child(createSpan("Size A (50-150%)"));
   scaleASlider = createSlider(50, 150, 100, 1);
   scaleASlider.parent(transASec);
   scaleASlider.input(redrawCanvas);
 
-  transASec.child(createSpan("Horizontal offset A (-30%..+30% of base size)"));
+  transASec.child(createSpan("Horizontal offset A (-30%..+30% base size)"));
   offsetASlider = createSlider(-30, 30, 0, 1);
   offsetASlider.parent(transASec);
   offsetASlider.input(redrawCanvas);
 
   const transBSec = section("Font B transform");
-  transBSec.child(createSpan("Size B (50–150%)"));
+  transBSec.child(createSpan("Size B (50-150%)"));
   scaleBSlider = createSlider(50, 150, 100, 1);
   scaleBSlider.parent(transBSec);
   scaleBSlider.input(redrawCanvas);
 
-  transBSec.child(createSpan("Horizontal offset B (-30%..+30% of base size)"));
+  transBSec.child(createSpan("Horizontal offset B (-30%..+30% base size)"));
   offsetBSlider = createSlider(-30, 30, 0, 1);
   offsetBSlider.parent(transBSec);
   offsetBSlider.input(redrawCanvas);
 
   // --------------------------------------------------------
-  // STYLING SECTION (FILL + OUTLINE)
+  // STYLING (FILL + OUTLINE)
 // --------------------------------------------------------
   const styleSec = section("Styling");
 
@@ -242,17 +285,17 @@ function setup() {
   outlinePicker.parent(styleSec);
   outlinePicker.input(redrawCanvas);
 
-  styleSec.child(createSpan("Outline thickness (0–40 px)"));
+  styleSec.child(createSpan("Outline thickness (0-40 px)"));
   outlineWidthSlider = createSlider(0, 40, 6, 1);
   outlineWidthSlider.parent(styleSec);
   outlineWidthSlider.input(redrawCanvas);
 
-  styleSec.child(createSpan("Corner roundness (0 sharp – 1 bevel – 2 round)"));
+  styleSec.child(createSpan("Corner roundness (0 sharp - 1 bevel - 2 round)"));
   outlineRoundSlider = createSlider(0, 2, 2, 1);
   outlineRoundSlider.parent(styleSec);
   outlineRoundSlider.input(redrawCanvas);
 
-  styleSec.child(createSpan("Outline blurriness / glow (0–20)"));
+  styleSec.child(createSpan("Outline blurriness / glow (0-20)"));
   outlineBlurSlider = createSlider(0, 20, 0, 1);
   outlineBlurSlider.parent(styleSec);
   outlineBlurSlider.input(redrawCanvas);
@@ -264,6 +307,9 @@ function setup() {
 
   const bgModeRow = createDiv();
   bgModeRow.parent(bgSec);
+  bgModeRow.style("display", "flex");
+  bgModeRow.style("gap", "6px");
+  bgModeRow.style("align-items", "center");
   bgModeRow.child(createSpan("Mode"));
 
   bgModeSelect = createSelect();
@@ -301,7 +347,7 @@ function setup() {
   animSpeedSlider.parent(animSec);
   animSpeedSlider.input(redrawCanvas);
 
-  animSec.child(createSpan("Amplitude (0–0.5 of full range)"));
+  animSec.child(createSpan("Amplitude (0-0.5 of range)"));
   animAmplitudeSlider = createSlider(0.0, 0.5, 0.15, 0.01);
   animAmplitudeSlider.parent(animSec);
   animAmplitudeSlider.input(redrawCanvas);
@@ -318,7 +364,7 @@ function setup() {
 }
 
 // ----------------------------------------------------------
-// HELPERS
+// BASIC HELPERS
 // ----------------------------------------------------------
 function systemFont() {
   return "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
@@ -345,7 +391,7 @@ function handleAnimationState() {
 }
 
 function windowResized() {
-  // Do not auto-resize poster, user controls format manually now
+  // Do not auto-resize poster, format is manual
 }
 
 function redrawCanvas() {
@@ -353,7 +399,7 @@ function redrawCanvas() {
 }
 
 // ----------------------------------------------------------
-// FONT / BG LOADING
+// FONT / BACKGROUND LOADING
 // ----------------------------------------------------------
 function handleFontFile(file, which) {
   if (!file) return;
@@ -440,7 +486,7 @@ function tracePathOnContext(ctx, path) {
 }
 
 // ----------------------------------------------------------
-// DRAW ONE HYBRID GLYPH (with outer-only outline)
+// DRAW ONE HYBRID GLYPH (outer-only outline)
 // ----------------------------------------------------------
 function drawSplitGlyph(
   ch,
@@ -547,12 +593,11 @@ function drawSplitGlyph(
 }
 
 // ----------------------------------------------------------
-// BACKGROUND DRAWING
+// BACKGROUND
 // ----------------------------------------------------------
 function drawBackground() {
   const mode = bgModeSelect.value();
   if (mode === "image" && bgImg) {
-    // cover-fit image
     const canvasRatio = width / height;
     const imgRatio = bgImg.width / bgImg.height;
 
@@ -586,7 +631,70 @@ function drawBackground() {
 }
 
 // ----------------------------------------------------------
-// MAIN DRAW LOOP
+// HORIZONTAL LAYOUT WITH ALIGNMENT
+// ----------------------------------------------------------
+function shapeLinesHorizontal(txt, baseSize, tracking, margin) {
+  const lines = [];
+  let current = "";
+  let currentWidth = 0;
+  const maxWidth = width - margin * 2;
+
+  function pushLine() {
+    lines.push({ text: current, width: currentWidth });
+    current = "";
+    currentWidth = 0;
+  }
+
+  for (let i = 0; i < txt.length; i++) {
+    const ch = txt[i];
+
+    if (ch === "\n") {
+      pushLine();
+      continue;
+    }
+
+    const gA = otFontA.charToGlyph(ch);
+    const gB = otFontB.charToGlyph(ch);
+    if (!gA || !gB) continue;
+
+    const advA = glyphAdvance(gA, otFontA, baseSize);
+    const advB = glyphAdvance(gB, otFontB, baseSize);
+    const adv = (advA + advB) * 0.5;
+
+    if (current.length === 0) {
+      // first in line
+      if (adv > maxWidth && current === "") {
+        // absurdly wide glyph: put it alone
+        current = ch;
+        currentWidth = adv;
+        pushLine();
+        continue;
+      } else {
+        current = ch;
+        currentWidth = adv;
+      }
+    } else {
+      const widthNeeded = currentWidth + tracking + adv;
+      if (widthNeeded > maxWidth) {
+        pushLine();
+        current = ch;
+        currentWidth = adv;
+      } else {
+        current += ch;
+        currentWidth = widthNeeded;
+      }
+    }
+  }
+
+  if (current.length > 0) {
+    pushLine();
+  }
+
+  return lines;
+}
+
+// ----------------------------------------------------------
+// MAIN DRAW
 // ----------------------------------------------------------
 function draw() {
   drawBackground();
@@ -605,6 +713,7 @@ function draw() {
   const baseSize = sizeSlider.value();
   const tracking = trackingSlider.value();
   const orientation = orientationSelect.value();
+  const alignMode = alignSelect.value();
   const lineH = lineHeightSlider.value();
 
   // Animated cut
@@ -634,62 +743,74 @@ function draw() {
   if (r === 1) joinType = "bevel";
   if (r === 2) joinType = "round";
 
-  // Layout
-  let margin = baseSize * 0.4;
-  let x = margin;
-  let y = baseSize * 1.2;
+  const margin = baseSize * 0.4;
 
   if (orientation === "horizontal") {
-    for (let i = 0; i < txt.length; i++) {
-      const ch = txt[i];
+    const shaped = shapeLinesHorizontal(txt, baseSize, tracking, margin);
+    let y = baseSize * 1.2;
 
-      if (ch === "\n") {
+    for (let li = 0; li < shaped.length; li++) {
+      const line = shaped[li];
+      let x;
+
+      const maxWidth = width - 2 * margin;
+      if (alignMode === "left") {
         x = margin;
-        y += baseSize * lineH;
-        continue;
+      } else if (alignMode === "center") {
+        x = margin + (maxWidth - line.width) / 2;
+      } else {
+        x = margin + (maxWidth - line.width);
       }
 
-      const gA = otFontA.charToGlyph(ch);
-      const gB = otFontB.charToGlyph(ch);
-      if (!gA || !gB) continue;
+      for (let ci = 0; ci < line.text.length; ci++) {
+        const ch = line.text[ci];
+        const gA = otFontA.charToGlyph(ch);
+        const gB = otFontB.charToGlyph(ch);
+        if (!gA || !gB) continue;
 
-      drawSplitGlyph(
-        ch,
-        x,
-        y,
-        baseSize,
-        mode,
-        cutRatio,
-        fillColor,
-        outlineColor,
-        outlineWidth,
-        joinType,
-        blurAmount
-      );
+        drawSplitGlyph(
+          ch,
+          x,
+          y,
+          baseSize,
+          mode,
+          cutRatio,
+          fillColor,
+          outlineColor,
+          outlineWidth,
+          joinType,
+          blurAmount
+        );
 
-      const advA = glyphAdvance(gA, otFontA, baseSize);
-      const advB = glyphAdvance(gB, otFontB, baseSize);
-      const adv = (advA + advB) * 0.5;
+        const advA = glyphAdvance(gA, otFontA, baseSize);
+        const advB = glyphAdvance(gB, otFontB, baseSize);
+        const adv = (advA + advB) * 0.5;
 
-      x += adv + tracking;
-
-      if (x > width - margin - baseSize) {
-        x = margin;
-        y += baseSize * lineH;
+        x += adv + tracking;
       }
+
+      y += baseSize * lineH;
     }
   } else {
-    // Vertical text flow: top → bottom, multiple columns
-    x = margin;
-    y = margin + baseSize;
+    // Vertical text flow: top to bottom, multiple columns
+    let xStart;
+    if (alignMode === "left") {
+      xStart = baseSize * 0.6;
+    } else if (alignMode === "center") {
+      xStart = width / 2;
+    } else {
+      xStart = width - baseSize * 1.6;
+    }
+
+    let x = xStart;
+    let y = baseSize * 1.2;
 
     for (let i = 0; i < txt.length; i++) {
       const ch = txt[i];
 
       if (ch === "\n") {
-        // new column on manual line break
         x += baseSize * 1.1;
-        y = margin + baseSize;
+        y = baseSize * 1.2;
         continue;
       }
 
@@ -713,8 +834,8 @@ function draw() {
 
       y += baseSize * lineH;
 
-      if (y > height - margin) {
-        y = margin + baseSize;
+      if (y > height - baseSize) {
+        y = baseSize * 1.2;
         x += baseSize * 1.1;
       }
     }
