@@ -1,5 +1,5 @@
 // ----------------------------------------------------------
-// HYBRID FONT POSTER TOOL - ZOOM + HEX COLORS + SIDE SWAP
+// HYBRID FONT POSTER TOOL - ZOOM + HEX + SIDE SWAP + ROTATION
 // p5.js + opentype.js
 // ----------------------------------------------------------
 
@@ -24,17 +24,20 @@ let bgImg = null;
 
 let animateCheckbox, animSpeedSlider, animAmplitudeSlider;
 let alternateSideCheckbox, alternateSideSpeedSlider;
+let rotateSidesCheckbox, rotateSidesSpeedSlider;
 
 let posterWidth, posterHeight;
 
-const DEFAULT_GREEN = "#1f6a3a";
+// UI text color
+const DEFAULT_UI_GREEN = "#1f6a3a";
 
 // ----------------------------------------------------------
 // SETUP
 // ----------------------------------------------------------
 function setup() {
-  posterWidth = windowWidth * 0.7;
-  posterHeight = windowHeight - 20;
+  // Default poster size
+  posterWidth = 1080;
+  posterHeight = 1920;
 
   // Main layout: left UI, right canvas
   const main = createDiv();
@@ -52,7 +55,7 @@ function setup() {
   ui.style("box-sizing", "border-box");
   ui.style("font-family", systemFont());
   ui.style("font-size", "12px");
-  ui.style("color", DEFAULT_GREEN);
+  ui.style("color", DEFAULT_UI_GREEN);
   ui.style("background", "#ffffff");
   ui.style("display", "flex");
   ui.style("flex-direction", "column");
@@ -87,7 +90,7 @@ function setup() {
     h.style("font-size", "13px");
     h.style("text-transform", "uppercase");
     h.style("letter-spacing", "0.08em");
-    h.style("color", DEFAULT_GREEN);
+    h.style("color", DEFAULT_UI_GREEN);
 
     return s;
   }
@@ -132,6 +135,7 @@ function setup() {
   orientationSelect.parent(orientRow);
   orientationSelect.option("Horizontal", "horizontal");
   orientationSelect.option("Vertical", "vertical");
+  orientationSelect.selected("horizontal");
   orientationSelect.changed(redrawCanvas);
 
   const alignRow = createDiv();
@@ -146,6 +150,7 @@ function setup() {
   alignSelect.option("Left", "left");
   alignSelect.option("Center", "center");
   alignSelect.option("Right", "right");
+  alignSelect.selected("center"); // default center
   alignSelect.changed(redrawCanvas);
 
   formatSec.child(createSpan("Line height (can be negative)"));
@@ -195,7 +200,7 @@ function setup() {
   textInput.style("height", "120px");
   textInput.style("padding", "4px 6px");
   textInput.style("border-radius", "4px");
-  textInput.style("border", "1px solid " + DEFAULT_GREEN);
+  textInput.style("border", "1px solid " + DEFAULT_UI_GREEN);
   textInput.style("resize", "vertical");
   textInput.value("BFD\nHybrid type posters\nare fun.");
   textInput.input(redrawCanvas);
@@ -224,6 +229,7 @@ function setup() {
   axisModeSelect.parent(modeRow);
   axisModeSelect.option("Vertical (left/right)", "vertical");
   axisModeSelect.option("Horizontal (top/bottom)", "horizontal");
+  axisModeSelect.selected("vertical");
   axisModeSelect.changed(redrawCanvas);
 
   cutLabel = createSpan("Cut position (0 = left, 100 = right)");
@@ -259,14 +265,16 @@ function setup() {
   // ----------------- STYLING (FILL + OUTLINE) -----------------
   const styleSec = section("Styling");
 
-  const fillControl = addColorControl(styleSec, "Fill", DEFAULT_GREEN, redrawCanvas);
+  // Default fill color #00f900
+  const fillControl = addColorControl(styleSec, "Fill", "#00f900", redrawCanvas);
   fillPicker = fillControl.picker;
 
-  const outlineControl = addColorControl(styleSec, "Outline", "#000000", redrawCanvas);
+  // Default outline color #feffff
+  const outlineControl = addColorControl(styleSec, "Outline", "#feffff", redrawCanvas);
   outlinePicker = outlineControl.picker;
 
   styleSec.child(createSpan("Outline thickness (0 - 40 px)"));
-  outlineWidthSlider = createSlider(0, 40, 6, 1);
+  outlineWidthSlider = createSlider(40, 0, 6, 1);
   outlineWidthSlider.parent(styleSec);
   outlineWidthSlider.input(redrawCanvas);
 
@@ -295,9 +303,11 @@ function setup() {
   bgModeSelect.option("Solid color", "solid");
   bgModeSelect.option("Vertical gradient", "gradient");
   bgModeSelect.option("Image", "image");
+  bgModeSelect.selected("solid");
   bgModeSelect.changed(redrawCanvas);
 
-  const bg1Control = addColorControl(bgSec, "Color 1", "#ffffff", redrawCanvas);
+  // Default background color #00f900
+  const bg1Control = addColorControl(bgSec, "Color 1", "#00f900", redrawCanvas);
   bgColor1Picker = bg1Control.picker;
 
   const bg2Control = addColorControl(bgSec, "Color 2", "#cccccc", redrawCanvas);
@@ -324,14 +334,23 @@ function setup() {
   animAmplitudeSlider.parent(animSec);
   animAmplitudeSlider.input(redrawCanvas);
 
-  alternateSideCheckbox = createCheckbox("Alternate font side", false);
+  alternateSideCheckbox = createCheckbox("Alternate font side (flip A/B)", false);
   alternateSideCheckbox.parent(animSec);
   alternateSideCheckbox.changed(handleAnimationState);
 
-  animSec.child(createSpan("Side swap speed"));
+  animSec.child(createSpan("Side flip speed"));
   alternateSideSpeedSlider = createSlider(0.1, 5.0, 1.0, 0.05);
   alternateSideSpeedSlider.parent(animSec);
   alternateSideSpeedSlider.input(redrawCanvas);
+
+  rotateSidesCheckbox = createCheckbox("Rotate sides (L -> T -> R -> B)", false);
+  rotateSidesCheckbox.parent(animSec);
+  rotateSidesCheckbox.changed(handleAnimationState);
+
+  animSec.child(createSpan("Rotate speed"));
+  rotateSidesSpeedSlider = createSlider(0.1, 5.0, 1.0, 0.05);
+  rotateSidesSpeedSlider.parent(animSec);
+  rotateSidesSpeedSlider.input(redrawCanvas);
 
   // ----------------- EXPORT -----------------
   const exportSec = section("Export");
@@ -398,8 +417,11 @@ function applyFormat() {
 }
 
 function handleAnimationState() {
-  if ((animateCheckbox && animateCheckbox.checked()) ||
-      (alternateSideCheckbox && alternateSideCheckbox.checked())) {
+  if (
+    (animateCheckbox && animateCheckbox.checked()) ||
+    (alternateSideCheckbox && alternateSideCheckbox.checked()) ||
+    (rotateSidesCheckbox && rotateSidesCheckbox.checked())
+  ) {
     loop();
   } else {
     noLoop();
@@ -503,7 +525,7 @@ function tracePathOnContext(ctx, path) {
 }
 
 // ----------------------------------------------------------
-// DRAW ONE HYBRID GLYPH (outer-only outline) with side swap
+// DRAW ONE HYBRID GLYPH (outer-only outline) with side modes
 // ----------------------------------------------------------
 function drawSplitGlyph(
   ch,
@@ -517,7 +539,9 @@ function drawSplitGlyph(
   outlineWidth,
   joinType,
   blurAmount,
-  swapSides
+  swapSides,
+  rotateActive,
+  sideMode
 ) {
   const gA = otFontA.charToGlyph(ch);
   const gB = otFontB.charToGlyph(ch);
@@ -543,7 +567,6 @@ function drawSplitGlyph(
   const pathB = gB.getPath(xBase + offB, yBase, sizeB);
 
   function drawHalf(path, rx, ry, rw, rh) {
-    // stroke first
     if (outlineWidth > 0) {
       ctx.save();
       ctx.beginPath();
@@ -565,7 +588,6 @@ function drawSplitGlyph(
       ctx.restore();
     }
 
-    // fill on top
     ctx.save();
     ctx.beginPath();
     ctx.rect(rx, ry, rw, rh);
@@ -579,7 +601,41 @@ function drawSplitGlyph(
     ctx.restore();
   }
 
-  if (mode === "vertical") {
+  // Decide effective mode and which side gets A or B
+  let effMode = mode; // "vertical" or "horizontal"
+  let aOnLeft = true;
+  let aOnTop = true;
+
+  if (rotateActive) {
+    // sideMode: 0 = A left/B right, 1 = A top/B bottom,
+    //           2 = A right/B left, 3 = A bottom/B top
+    const sm = sideMode % 4;
+    if (sm === 0) { // left/right, A left
+      effMode = "vertical";
+      aOnLeft = true;
+      aOnTop = true;
+    } else if (sm === 1) { // top/bottom, A top
+      effMode = "horizontal";
+      aOnTop = true;
+      aOnLeft = true;
+    } else if (sm === 2) { // left/right, A right
+      effMode = "vertical";
+      aOnLeft = false;
+      aOnTop = true;
+    } else { // sm === 3, top/bottom, A bottom
+      effMode = "horizontal";
+      aOnTop = false;
+      aOnLeft = true;
+    }
+  } else {
+    if (mode === "vertical") {
+      aOnLeft = !swapSides;
+    } else {
+      aOnTop = !swapSides;
+    }
+  }
+
+  if (effMode === "vertical") {
     const splitX = xMin + cutRatio * w;
 
     const leftX = xMin - pad;
@@ -592,12 +648,10 @@ function drawSplitGlyph(
     const rightW = (xMax + pad) - splitX;
     const rightH = h + 2 * pad;
 
-    if (!swapSides) {
-      // A left, B right
+    if (aOnLeft) {
       drawHalf(pathA, leftX, leftY, leftW, leftH);
       drawHalf(pathB, rightX, rightY, rightW, rightH);
     } else {
-      // B left, A right
       drawHalf(pathB, leftX, leftY, leftW, leftH);
       drawHalf(pathA, rightX, rightY, rightW, rightH);
     }
@@ -614,14 +668,12 @@ function drawSplitGlyph(
     const topW = (xMax - xMin) + 2 * pad;
     const topH = (splitY - yMin) + pad;
 
-    if (!swapSides) {
-      // B bottom, A top
-      drawHalf(pathB, bottomX, bottomY, bottomW, bottomH);
+    if (aOnTop) {
       drawHalf(pathA, topX, topY, topW, topH);
+      drawHalf(pathB, bottomX, bottomY, bottomW, bottomH);
     } else {
-      // A bottom, B top
-      drawHalf(pathA, bottomX, bottomY, bottomW, bottomH);
       drawHalf(pathB, topX, topY, topW, topH);
+      drawHalf(pathA, bottomX, bottomY, bottomW, bottomH);
     }
   }
 }
@@ -742,7 +794,7 @@ function draw() {
 
   if (!otFontA || !otFontB) {
     push();
-    fill(DEFAULT_GREEN);
+    fill(DEFAULT_UI_GREEN);
     textSize(16);
     textFont(systemFont());
     text("Load Font A and Font B to start.", 40, 60);
@@ -768,11 +820,20 @@ function draw() {
     cutRatio = constrain(baseCut + delta, 0.0, 1.0);
   }
 
-  // Animated font side swap
+  // Animated side flip
   let swapSidesGlobal = false;
   if (alternateSideCheckbox && alternateSideCheckbox.checked()) {
     const t2 = millis() * 0.001 * alternateSideSpeedSlider.value();
     swapSidesGlobal = Math.sin(t2) > 0;
+  }
+
+  // Animated rotation of sides (L -> T -> R -> B)
+  let rotateActive = false;
+  let sideModeGlobal = 0;
+  if (rotateSidesCheckbox && rotateSidesCheckbox.checked()) {
+    rotateActive = true;
+    const t3 = millis() * 0.001 * rotateSidesSpeedSlider.value();
+    sideModeGlobal = Math.floor(t3) % 4;
   }
 
   const mode = axisModeSelect.value();
@@ -829,7 +890,9 @@ function draw() {
           outlineWidth,
           joinType,
           blurAmount,
-          swapSidesGlobal
+          swapSidesGlobal,
+          rotateActive,
+          sideModeGlobal
         );
 
         const advA = glyphAdvance(gA, otFontA, baseSize);
@@ -880,7 +943,9 @@ function draw() {
         outlineWidth,
         joinType,
         blurAmount,
-        swapSidesGlobal
+        swapSidesGlobal,
+        rotateActive,
+        sideModeGlobal
       );
 
       y += baseSize * lineH;
