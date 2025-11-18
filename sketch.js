@@ -1,7 +1,7 @@
 // sketch.js
-// Needs p5.js, paper.js, opentype.js loaded in this order.
+// Needs in index.html (in this order):
+// p5.js, paper-full.js, opentype.js, then this file.
 
-// globals
 let otFontA = null;
 let otFontB = null;
 
@@ -24,7 +24,7 @@ function setup() {
   createCanvas(windowWidth, windowHeight - 220);
   noLoop();
 
-  // initialise Paper with a dummy canvas (we only use it for geometry)
+  // init Paper with a dummy canvas (used only for geometry)
   const dummyCanvas = document.createElement("canvas");
   paper.setup(dummyCanvas);
 
@@ -58,17 +58,15 @@ function setup() {
     return s;
   }
 
-  // Fonts
+  // Fonts section
   const fontsSec = section("Fonts");
 
   fontsSec.child(createSpan("Font A"));
-
   const fontAInput = createFileInput(f => handleFontFile(f, "A"));
   fontAInput.parent(fontsSec);
   fontAInput.style("font-size", "11px");
 
   fontsSec.child(createSpan("Font B"));
-
   const fontBInput = createFileInput(f => handleFontFile(f, "B"));
   fontBInput.parent(fontsSec);
   fontBInput.style("font-size", "11px");
@@ -84,32 +82,29 @@ function setup() {
   fontBStatusP.style("color", GREEN);
 
   const hint = createP(
-    "Preview and OTF: left or top half from A, right or bottom half from B."
+    "Preview + OTF: left/top half from A, right/bottom half from B, using real outline clipping."
   );
   hint.parent(fontsSec);
   hint.style("margin", "6px 0 0 0");
   hint.style("color", GREEN);
   hint.style("font-size", "11px");
 
-  // Text
+  // Text section
   const textSec = section("Text");
-
   textInput = createInput("BFD");
   textInput.parent(textSec);
   styleTextInput(textInput);
   textInput.input(redrawCanvas);
 
-  // Preview params
+  // Preview parameters
   const paramSec = section("Preview");
 
   paramSec.child(createSpan("Font size"));
-
   sizeSlider = createSlider(48, 400, 260, 1);
   sizeSlider.parent(paramSec);
   sizeSlider.input(redrawCanvas);
 
   paramSec.child(createSpan("Tracking (letter spacing)"));
-
   trackingSlider = createSlider(-40, 120, 20, 1);
   trackingSlider.parent(paramSec);
   trackingSlider.input(redrawCanvas);
@@ -118,7 +113,6 @@ function setup() {
   const axisSec = section("Split inside glyph");
 
   axisSec.child(createSpan("Mode"));
-
   axisModeSelect = createSelect();
   axisModeSelect.parent(axisSec);
   axisModeSelect.option("Vertical split (left/right)", "vertical");
@@ -332,9 +326,8 @@ function draw() {
 //  Boolean clipping for font export using Paper.js
 //////////////////////////////////////////////////////////////
 
-// convert opentype.Path -> paper.Path (in font units)
-// we keep coordinates in font space and mirror Y so that
-// preview and export are consistent
+// opentype.Path -> paper.Path (font units)
+// y axis is flipped for Paper space; we flip back later
 function opentypePathToPaper(path) {
   const p = new paper.Path();
   const cmds = path.commands;
@@ -351,7 +344,6 @@ function opentypePathToPaper(path) {
       p.lineTo(pt);
       currentPoint = pt;
     } else if (c.type === "Q") {
-      // quadratic -> cubic approximation
       const p0 = currentPoint;
       const q = new paper.Point(c.x1, -c.y1);
       const p2 = new paper.Point(c.x, -c.y);
@@ -375,10 +367,36 @@ function opentypePathToPaper(path) {
   return p;
 }
 
-// convert paper.Path -> opentype.Path with cubic curves
+// check if a Paper item actually has geometry
+function paperHasGeometry(item) {
+  if (!item) return false;
+  if (item instanceof paper.Path) {
+    return item.segments && item.segments.length > 0;
+  }
+  if (item instanceof paper.CompoundPath) {
+    if (!item.children || !item.children.length) return false;
+    return item.children.some(ch => ch.segments && ch.segments.length > 0);
+  }
+  return false;
+}
+
+// paper.Path or CompoundPath -> opentype.Path
 function paperPathToOpenType(path) {
   const otPath = new opentype.Path();
-  const segs = path.segments;
+
+  if (!path) return otPath;
+
+  // CompoundPath: merge all children
+  if (path instanceof paper.CompoundPath) {
+    if (!path.children) return otPath;
+    path.children.forEach(child => {
+      const childOt = paperPathToOpenType(child);
+      otPath.commands = otPath.commands.concat(childOt.commands);
+    });
+    return otPath;
+  }
+
+  const segs = path.segments || [];
   if (!segs.length) return otPath;
 
   let first = segs[0];
@@ -415,25 +433,22 @@ function paperPathToOpenType(path) {
   return otPath;
 }
 
-// build one hybrid glyph in font units using Paper boolean ops
+// build one hybrid glyph (font units) with Paper boolean ops
 function buildHybridGlyph(unicode, mode, cutRatio, baseUnits) {
   const ch = String.fromCharCode(unicode);
   const gA = otFontA.charToGlyph(ch);
   const gB = otFontB.charToGlyph(ch);
 
-  // if one missing, copy from the other
   if (!gA && !gB) return null;
   if (!gA && gB) return gB;
   if (gA && !gB) return gA;
 
-  // bounding boxes in font units
   const bbA = gA.getBoundingBox();
   const bbB = gB.getBoundingBox();
   const x1 = Math.min(bbA.x1, bbB.x1);
   const y1 = Math.min(bbA.y1, bbB.y1);
   const x2 = Math.max(bbA.x2, bbB.x2);
   const y2 = Math.max(bbA.y2, bbB.y2);
-
   const w = x2 - x1;
   const h = y2 - y1;
 
@@ -442,6 +457,7 @@ function buildHybridGlyph(unicode, mode, cutRatio, baseUnits) {
 
   if (mode === "vertical") {
     const splitX = x1 + cutRatio * w;
+
     rectA = new paper.Path.Rectangle(
       new paper.Rectangle(
         new paper.Point(x1, -y2),
@@ -456,14 +472,13 @@ function buildHybridGlyph(unicode, mode, cutRatio, baseUnits) {
     );
   } else {
     const splitY = y1 + cutRatio * h; // 0 bottom, 1 top
-    // top rectangle for A
+
     rectA = new paper.Path.Rectangle(
       new paper.Rectangle(
         new paper.Point(x1, -y2),
         new paper.Point(x2, -splitY)
       )
     );
-    // bottom rectangle for B
     rectB = new paper.Path.Rectangle(
       new paper.Rectangle(
         new paper.Point(x1, -splitY),
@@ -478,19 +493,35 @@ function buildHybridGlyph(unicode, mode, cutRatio, baseUnits) {
   const pathAFull = opentypePathToPaper(gA.getPath(0, 0, baseUnits));
   const pathBFull = opentypePathToPaper(gB.getPath(0, 0, baseUnits));
 
-  const pieceA = pathAFull.intersect(rectA);
-  const pieceB = pathBFull.intersect(rectB);
+  let pieceA = pathAFull.intersect(rectA);
+  let pieceB = pathBFull.intersect(rectB);
 
-  // union of both pieces
-  const hybridShape = pieceA.unite(pieceB);
-
-  // clean up temporaries
   pathAFull.remove();
   pathBFull.remove();
   rectA.remove();
   rectB.remove();
-  pieceA.remove();
-  pieceB.remove();
+
+  const hasA = paperHasGeometry(pieceA);
+  const hasB = paperHasGeometry(pieceB);
+
+  if (!hasA && !hasB) {
+    if (pieceA) pieceA.remove();
+    if (pieceB) pieceB.remove();
+    return null;
+  }
+
+  let hybridShape;
+  if (hasA && hasB) {
+    hybridShape = pieceA.unite(pieceB);
+    pieceA.remove();
+    pieceB.remove();
+  } else if (hasA) {
+    hybridShape = pieceA;
+    if (pieceB) pieceB.remove();
+  } else {
+    hybridShape = pieceB;
+    if (pieceA) pieceA.remove();
+  }
 
   const otPath = paperPathToOpenType(hybridShape);
   hybridShape.remove();
@@ -520,7 +551,7 @@ function downloadHybridFont() {
 
   const glyphs = [];
 
-  // simple ASCII range, you can extend if you want
+  // ASCII printable range; extend if you want more
   for (let u = 32; u <= 126; u++) {
     const hybridGlyph = buildHybridGlyph(u, mode, cutRatio, unitsPerEm);
     if (hybridGlyph) glyphs.push(hybridGlyph);
