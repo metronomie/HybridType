@@ -2,7 +2,8 @@
 // p5.js + opentype.js hybrid preview
 // - load Font A / Font B
 // - split glyphs vertically or horizontally
-// - per-font: relative size (uniform scale) + horizontal offset
+// - per-font: relative size (uniform) + horizontal offset
+// - styling: fill color, outline color, thickness, roundness, blurriness
 
 let otFontA = null;
 let otFontB = null;
@@ -21,17 +22,21 @@ let fontBStatusP;
 let scaleASlider, offsetASlider;
 let scaleBSlider, offsetBSlider;
 
-const GREEN = "#1f6a3a";
+// styling controls
+let fillPicker, outlinePicker;
+let outlineWidthSlider, outlineRoundSlider, outlineBlurSlider;
+
+const DEFAULT_GREEN = "#1f6a3a";
 
 function setup() {
-  createCanvas(windowWidth, windowHeight - 240);
+  createCanvas(windowWidth, windowHeight - 260);
   noLoop();
 
   const ui = createDiv();
   ui.style("padding", "8px");
   ui.style("font-family", systemFont());
   ui.style("font-size", "12px");
-  ui.style("color", GREEN);
+  ui.style("color", DEFAULT_GREEN);
   ui.style("background", "#ffffff");
   ui.style("display", "flex");
   ui.style("flex-wrap", "wrap");
@@ -41,7 +46,7 @@ function setup() {
     const s = createDiv();
     s.parent(ui);
     s.style("min-width", "230px");
-    s.style("max-width", "320px");
+    s.style("max-width", "340px");
     s.style("display", "flex");
     s.style("flex-direction", "column");
     s.style("gap", "4px");
@@ -52,7 +57,7 @@ function setup() {
     h.style("font-size", "13px");
     h.style("text-transform", "uppercase");
     h.style("letter-spacing", "0.08em");
-    h.style("color", GREEN);
+    h.style("color", DEFAULT_GREEN);
 
     return s;
   }
@@ -61,13 +66,11 @@ function setup() {
   const fontsSec = section("Fonts");
 
   fontsSec.child(createSpan("Font A"));
-
   const fontAInput = createFileInput(f => handleFontFile(f, "A"));
   fontAInput.parent(fontsSec);
   fontAInput.style("font-size", "11px");
 
   fontsSec.child(createSpan("Font B"));
-
   const fontBInput = createFileInput(f => handleFontFile(f, "B"));
   fontBInput.parent(fontsSec);
   fontBInput.style("font-size", "11px");
@@ -75,19 +78,19 @@ function setup() {
   fontAStatusP = createP("Font A: none");
   fontAStatusP.parent(fontsSec);
   fontAStatusP.style("margin", "4px 0 0 0");
-  fontAStatusP.style("color", GREEN);
+  fontAStatusP.style("color", DEFAULT_GREEN);
 
   fontBStatusP = createP("Font B: none");
   fontBStatusP.parent(fontsSec);
   fontBStatusP.style("margin", "2px 0 0 0");
-  fontBStatusP.style("color", GREEN);
+  fontBStatusP.style("color", DEFAULT_GREEN);
 
   const hint = createP(
-    "Preview only. Split: left/top from A, right/bottom from B. Adjust per-font size and horizontal offset."
+    "Preview only. Split: left/top from A, right/bottom from B. Adjust per-font size/offset and outline."
   );
   hint.parent(fontsSec);
   hint.style("margin", "6px 0 0 0");
-  hint.style("color", GREEN);
+  hint.style("color", DEFAULT_GREEN);
   hint.style("font-size", "11px");
 
   // Text
@@ -136,7 +139,7 @@ function setup() {
   scaleASlider.parent(transASec);
   scaleASlider.input(redrawCanvas);
 
-  transASec.child(createSpan("Horizontal offset A (-30%..+30% of size)"));
+  transASec.child(createSpan("Horizontal offset A (-30%..+30% of base size)"));
   offsetASlider = createSlider(-30, 30, 0, 1);
   offsetASlider.parent(transASec);
   offsetASlider.input(redrawCanvas);
@@ -149,10 +152,40 @@ function setup() {
   scaleBSlider.parent(transBSec);
   scaleBSlider.input(redrawCanvas);
 
-  transBSec.child(createSpan("Horizontal offset B (-30%..+30% of size)"));
+  transBSec.child(createSpan("Horizontal offset B (-30%..+30% of base size)"));
   offsetBSlider = createSlider(-30, 30, 0, 1);
   offsetBSlider.parent(transBSec);
   offsetBSlider.input(redrawCanvas);
+
+  // Styling
+  const styleSec = section("Styling");
+
+  const fillLabel = createSpan("Fill color");
+  fillLabel.parent(styleSec);
+  fillPicker = createColorPicker(DEFAULT_GREEN);
+  fillPicker.parent(styleSec);
+  fillPicker.input(redrawCanvas);
+
+  const outlineLabel = createSpan("Outline color");
+  outlineLabel.parent(styleSec);
+  outlinePicker = createColorPicker("#000000");
+  outlinePicker.parent(styleSec);
+  outlinePicker.input(redrawCanvas);
+
+  styleSec.child(createSpan("Outline thickness (0–40 px)"));
+  outlineWidthSlider = createSlider(0, 40, 6, 1);
+  outlineWidthSlider.parent(styleSec);
+  outlineWidthSlider.input(redrawCanvas);
+
+  styleSec.child(createSpan("Outline roundness (0 sharp – 1 bevel – 2 round)"));
+  outlineRoundSlider = createSlider(0, 2, 2, 1);
+  outlineRoundSlider.parent(styleSec);
+  outlineRoundSlider.input(redrawCanvas);
+
+  styleSec.child(createSpan("Outline blurriness (0–20)"));
+  outlineBlurSlider = createSlider(0, 20, 0, 1);
+  outlineBlurSlider.parent(styleSec);
+  outlineBlurSlider.input(redrawCanvas);
 
   // Export
   const exportSec = section("Export");
@@ -168,15 +201,15 @@ function systemFont() {
 function styleTextInput(inp) {
   inp.style("padding", "4px 6px");
   inp.style("border-radius", "4px");
-  inp.style("border", "1px solid " + GREEN);
+  inp.style("border", "1px solid " + DEFAULT_GREEN);
   inp.style("background", "#ffffff");
-  inp.style("color", GREEN);
+  inp.style("color", DEFAULT_GREEN);
   inp.style("font-size", "14px");
   inp.style("width", "100%");
 }
 
 function windowResized() {
-  resizeCanvas(windowWidth, windowHeight - 240);
+  resizeCanvas(windowWidth, windowHeight - 260);
   redrawCanvas();
 }
 
@@ -214,7 +247,7 @@ function glyphAdvance(glyph, font, sizePx) {
   return aw * scale;
 }
 
-// compute union bbox of glyph A and B in screen coordinates
+// union bbox of glyph A and B in screen coordinates
 function unionBBoxPx(glyphA, glyphB, xBase, yBase, sizeA, sizeB, offA, offB) {
   const upmA = otFontA.unitsPerEm || 1000;
   const upmB = otFontB.unitsPerEm || 1000;
@@ -243,15 +276,27 @@ function unionBBoxPx(glyphA, glyphB, xBase, yBase, sizeA, sizeB, offA, offB) {
   };
 }
 
-function drawSplitGlyph(ch, xBase, yBase, fontSize, mode, cutRatio) {
+function drawSplitGlyph(
+  ch,
+  xBase,
+  yBase,
+  baseSize,
+  mode,
+  cutRatio,
+  fillColor,
+  outlineColor,
+  outlineWidth,
+  lineJoinType,
+  blurAmount
+) {
   const glyphA = otFontA.charToGlyph(ch);
   const glyphB = otFontB.charToGlyph(ch);
   if (!glyphA || !glyphB) return;
 
-  const sizeA = fontSize * (scaleASlider.value() / 100);
-  const sizeB = fontSize * (scaleBSlider.value() / 100);
-  const offA = (offsetASlider.value() / 100) * fontSize;
-  const offB = (offsetBSlider.value() / 100) * fontSize;
+  const sizeA = baseSize * (scaleASlider.value() / 100);
+  const sizeB = baseSize * (scaleBSlider.value() / 100);
+  const offA = (offsetASlider.value() / 100) * baseSize;
+  const offB = (offsetBSlider.value() / 100) * baseSize;
 
   const bbox = unionBBoxPx(glyphA, glyphB, xBase, yBase, sizeA, sizeB, offA, offB);
   const { xMin, xMax, yMin, yMax } = bbox;
@@ -259,48 +304,66 @@ function drawSplitGlyph(ch, xBase, yBase, fontSize, mode, cutRatio) {
   const h = yMax - yMin;
 
   const ctx = drawingContext;
-  ctx.fillStyle = GREEN;
 
-  // prebuild paths with actual drawing size/position so we don't transform later
   const pathA = glyphA.getPath(xBase + offA, yBase, sizeA);
   const pathB = glyphB.getPath(xBase + offB, yBase, sizeB);
 
+  // helper: draw half (fill then optional stroke)
+  function drawHalf(path, rx, ry, rw, rh) {
+    // fill
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(rx, ry, rw, rh);
+    ctx.clip();
+
+    path.fill = fillColor;
+    path.stroke = null;
+    path.strokeWidth = 0;
+
+    ctx.shadowBlur = 0;
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = 0;
+
+    path.draw(ctx);   // fill only
+    ctx.restore();
+
+    // outline
+    if (outlineWidth > 0) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(rx, ry, rw, rh);
+      ctx.clip();
+
+      path.fill = null;
+      path.stroke = outlineColor;
+      path.strokeWidth = outlineWidth;
+      path.strokeJoin = lineJoinType;  // "miter", "bevel", "round"
+      path.strokeCap = lineJoinType;
+
+      if (blurAmount > 0) {
+        ctx.shadowBlur = blurAmount;
+        ctx.shadowColor = outlineColor;
+        ctx.shadowOffsetX = 0;
+        ctx.shadowOffsetY = 0;
+      } else {
+        ctx.shadowBlur = 0;
+        ctx.shadowOffsetX = 0;
+        ctx.shadowOffsetY = 0;
+      }
+
+      path.draw(ctx); // stroke only
+      ctx.restore();
+    }
+  }
+
   if (mode === "vertical") {
     const splitX = xMin + cutRatio * w;
-
-    // left from A
-    ctx.save();
-    ctx.beginPath();
-    ctx.rect(xMin, yMin, splitX - xMin, h);
-    ctx.clip();
-    pathA.draw(ctx);
-    ctx.restore();
-
-    // right from B
-    ctx.save();
-    ctx.beginPath();
-    ctx.rect(splitX, yMin, xMax - splitX, h);
-    ctx.clip();
-    pathB.draw(ctx);
-    ctx.restore();
+    drawHalf(pathA, xMin, yMin, splitX - xMin, h);       // left from A
+    drawHalf(pathB, splitX, yMin, xMax - splitX, h);     // right from B
   } else {
-    const splitY = yMax - cutRatio * h; // 0 bottom, 1 top
-
-    // bottom from B
-    ctx.save();
-    ctx.beginPath();
-    ctx.rect(xMin, splitY, w, yMax - splitY);
-    ctx.clip();
-    pathB.draw(ctx);
-    ctx.restore();
-
-    // top from A
-    ctx.save();
-    ctx.beginPath();
-    ctx.rect(xMin, yMin, w, splitY - yMin);
-    ctx.clip();
-    pathA.draw(ctx);
-    ctx.restore();
+    const splitY = yMax - cutRatio * h;
+    drawHalf(pathB, xMin, splitY, w, yMax - splitY);     // bottom from B
+    drawHalf(pathA, xMin, yMin, w, splitY - yMin);       // top from A
   }
 }
 
@@ -310,7 +373,7 @@ function draw() {
   if (!otFontA || !otFontB) {
     push();
     textFont(systemFont());
-    fill(GREEN);
+    fill(DEFAULT_GREEN);
     textSize(16);
     text("Load Font A and Font B.", 40, 60);
     pop();
@@ -332,11 +395,20 @@ function draw() {
   const sizeA = baseSize * (scaleASlider.value() / 100);
   const sizeB = baseSize * (scaleBSlider.value() / 100);
 
+  const fillColor = fillPicker ? fillPicker.value() : DEFAULT_GREEN;
+  const outlineColor = outlinePicker ? outlinePicker.value() : "#000000";
+  const outlineWidth = outlineWidthSlider ? outlineWidthSlider.value() : 0;
+  const blurAmount = outlineBlurSlider ? outlineBlurSlider.value() : 0;
+
+  let joinType = "miter";
+  if (outlineRoundSlider) {
+    const v = outlineRoundSlider.value();
+    if (v == 1) joinType = "bevel";
+    else if (v == 2) joinType = "round";
+  }
+
   let x = 40;
   let y = height * 0.75;
-
-  fill(GREEN);
-  noStroke();
 
   for (let i = 0; i < txt.length; i++) {
     const ch = txt[i];
@@ -351,7 +423,19 @@ function draw() {
     const glyphB = otFontB.charToGlyph(ch);
     if (!glyphA || !glyphB) continue;
 
-    drawSplitGlyph(ch, x, y, baseSize, mode, cutRatio);
+    drawSplitGlyph(
+      ch,
+      x,
+      y,
+      baseSize,
+      mode,
+      cutRatio,
+      fillColor,
+      outlineColor,
+      outlineWidth,
+      joinType,
+      blurAmount
+    );
 
     const advA = glyphAdvance(glyphA, otFontA, sizeA);
     const advB = glyphAdvance(glyphB, otFontB, sizeB);
