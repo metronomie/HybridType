@@ -1,11 +1,46 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
   <head>
-    <meta charset="utf-8" />
-    <title>Split-font hybrid tool</title>
+    <meta charset="UTF-8" />
+    <title>Hybrid Font Poster Tool</title>
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0"
+    />
+
+    <!-- p5 core -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+    <!-- p5 sound -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/addons/p5.sound.min.js"></script>
+    <!-- opentype.js -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/opentype.js/1.3.4/opentype.min.js"></script>
-    <script src="sketch.js"></script>
+
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        overflow: hidden;
+        background: #000;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          sans-serif;
+      }
+
+      /* p5 will inject its own container, we just make sure the page is full window */
+      body {
+        display: flex;
+        align-items: stretch;
+        justify-content: stretch;
+      }
+
+      canvas {
+        display: block;
+      }
+    </style>
   </head>
-  <body style="margin:0;background:#ffffff;"></body>
+  <body>
+    <!-- Everything is created from sketch.js via createDiv / createCanvas -->
+    <script src="sketch.js"></script>
+  </body>
 </html>

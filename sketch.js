@@ -1,10 +1,34 @@
 // ----------------------------------------------------------
-// HYBRID FONT POSTER TOOL - ZOOM + HEX + SIDE SWAP + ROTATION
-// p5.js + opentype.js
+// HYBRID FONT POSTER TOOL
+// - Default page: 1080 x 1920
+// - Default align: center
+// - Default bg + fill: #00f900
+// - Default outline color: #feffff, thickness: 40px
+// - Zoom, split, outline
+// - Font A/B hybrid, transforms
+// - Layout, negative line height, vertical/horizontal
+// - Animation: cut LFO, side flip, rotation
+// - Audio-reactive option on beat (default track)
 // ----------------------------------------------------------
+
+// opentype + p5.sound must be loaded in index.html
 
 let otFontA = null;
 let otFontB = null;
+
+// default font buffers loaded in preload
+let defaultFontABuffer = null;
+let defaultFontBBuffer = null;
+
+// audio
+let audio = null;
+let amplitudeAnalyzer = null;
+let audioPlayButton;
+let audioBeatCheckbox;
+let audioSensitivitySlider;
+let lastAudioLevel = 0;
+let swapSidesBeat = false;
+let sideModeBeat = 0;
 
 // UI globals
 let textInput;
@@ -30,6 +54,22 @@ let posterWidth, posterHeight;
 
 // UI text color
 const DEFAULT_UI_GREEN = "#1f6a3a";
+
+// ----------------------------------------------------------
+// PRELOAD: default fonts + default audio
+// ----------------------------------------------------------
+function preload() {
+  // Default fonts (relative paths; adjust if needed)
+  defaultFontABuffer = loadBytes("Fonts/Baskerville120Pro.otf");
+  defaultFontBBuffer = loadBytes("Fonts/ESAllianzExtraBold.ttf");
+
+  // Default audio track
+  soundFormats("mp3", "wav", "ogg");
+  audio = loadSound("Music/Eliminator_The Hunt_01.wav", () => {
+    amplitudeAnalyzer = new p5.Amplitude();
+    amplitudeAnalyzer.setInput(audio);
+  });
+}
 
 // ----------------------------------------------------------
 // SETUP
@@ -61,6 +101,9 @@ function setup() {
   ui.style("flex-direction", "column");
   ui.style("gap", "16px");
   ui.style("border-right", "1px solid #dddddd");
+  // make sidebar scrollable
+  ui.style("height", "100vh");
+  ui.style("overflow-y", "auto");
 
   // Canvas holder
   const canvasHolder = createDiv();
@@ -82,7 +125,7 @@ function setup() {
     s.style("flex-direction", "column");
     s.style("gap", "4px");
     s.style("padding", "6px 0");
-    s.style("border-bottom", "1px solid #e0e0e0");
+    s.style("border-bottom", "1px solid " + "#e0e0e0");
 
     const h = createElement("h2", title);
     h.parent(s);
@@ -154,7 +197,8 @@ function setup() {
   alignSelect.changed(redrawCanvas);
 
   formatSec.child(createSpan("Line height (can be negative)"));
-  lineHeightSlider = createSlider(-1.5, 3.0, 1.4, 0.05);
+  // tighter default: 0.9
+  lineHeightSlider = createSlider(-1.5, 3.0, 0.9, 0.05);
   lineHeightSlider.parent(formatSec);
   lineHeightSlider.input(redrawCanvas);
 
@@ -174,11 +218,11 @@ function setup() {
   const fontBInput = createFileInput(f => handleFontFile(f, "B"));
   fontBInput.parent(fontsSec);
 
-  fontAStatusP = createP("Font A: none");
+  fontAStatusP = createP("Font A: loading default...");
   fontAStatusP.parent(fontsSec);
   fontAStatusP.style("margin", "4px 0 0 0");
 
-  fontBStatusP = createP("Font B: none");
+  fontBStatusP = createP("Font B: loading default...");
   fontBStatusP.parent(fontsSec);
   fontBStatusP.style("margin", "2px 0 0 0");
 
@@ -188,6 +232,31 @@ function setup() {
   hint.parent(fontsSec);
   hint.style("margin", "6px 0 0 0");
   hint.style("font-size", "11px");
+
+  // Parse default fonts if available
+  try {
+    if (defaultFontABuffer && defaultFontABuffer.bytes) {
+      otFontA = opentype.parse(defaultFontABuffer.bytes.buffer);
+      fontAStatusP.html("Font A: Baskerville120Pro.otf (default)");
+    } else {
+      fontAStatusP.html("Font A: none (default failed)");
+    }
+  } catch (e) {
+    console.error("Error loading default Font A:", e);
+    fontAStatusP.html("Font A: error loading default");
+  }
+
+  try {
+    if (defaultFontBBuffer && defaultFontBBuffer.bytes) {
+      otFontB = opentype.parse(defaultFontBBuffer.bytes.buffer);
+      fontBStatusP.html("Font B: ESAllianzExtraBold.ttf (default)");
+    } else {
+      fontBStatusP.html("Font B: none (default failed)");
+    }
+  } catch (e) {
+    console.error("Error loading default Font B:", e);
+    fontBStatusP.html("Font B: error loading default");
+  }
 
   // ----------------- TEXT SECTION -----------------
   const textSec = section("Text");
@@ -202,7 +271,8 @@ function setup() {
   textInput.style("border-radius", "4px");
   textInput.style("border", "1px solid " + DEFAULT_UI_GREEN);
   textInput.style("resize", "vertical");
-  textInput.value("BFD\nHybrid type posters\nare fun.");
+  // default text: ALL / CAPS / 1312
+  textInput.value("ALL\nCAPS\n1312");
   textInput.input(redrawCanvas);
 
   textSec.child(createSpan("Base font size"));
@@ -274,7 +344,7 @@ function setup() {
   outlinePicker = outlineControl.picker;
 
   styleSec.child(createSpan("Outline thickness (0 - 40 px)"));
-  outlineWidthSlider = createSlider(40, 0, 6, 1);
+  outlineWidthSlider = createSlider(0, 40, 40, 1); // default 40px
   outlineWidthSlider.parent(styleSec);
   outlineWidthSlider.input(redrawCanvas);
 
@@ -352,6 +422,34 @@ function setup() {
   rotateSidesSpeedSlider.parent(animSec);
   rotateSidesSpeedSlider.input(redrawCanvas);
 
+  // ----------------- AUDIO / BEAT SECTION -----------------
+  const audioSec = section("Audio / Beat");
+
+  audioSec.child(createSpan("Default: Music/Eliminator_The Hunt_01.wav"));
+
+  const audioFileRow = createDiv();
+  audioFileRow.parent(audioSec);
+  audioFileRow.style("display", "flex");
+  audioFileRow.style("gap", "4px");
+  audioFileRow.style("align-items", "center");
+
+  audioFileRow.child(createSpan("Audio track"));
+  const audioFileInput = createFileInput(handleAudioFile);
+  audioFileInput.parent(audioFileRow);
+
+  audioPlayButton = createButton("Play audio");
+  audioPlayButton.parent(audioSec);
+  audioPlayButton.mousePressed(toggleAudio);
+
+  audioBeatCheckbox = createCheckbox("Drive animation from audio beat", false);
+  audioBeatCheckbox.parent(audioSec);
+  audioBeatCheckbox.changed(handleAnimationState);
+
+  audioSec.child(createSpan("Beat sensitivity"));
+  audioSensitivitySlider = createSlider(0.0, 1.0, 0.5, 0.01);
+  audioSensitivitySlider.parent(audioSec);
+  audioSensitivitySlider.input(redrawCanvas);
+
   // ----------------- EXPORT -----------------
   const exportSec = section("Export");
   const savePngBtn = createButton("Save PNG frame");
@@ -417,11 +515,13 @@ function applyFormat() {
 }
 
 function handleAnimationState() {
-  if (
+  const anyAnim =
     (animateCheckbox && animateCheckbox.checked()) ||
     (alternateSideCheckbox && alternateSideCheckbox.checked()) ||
-    (rotateSidesCheckbox && rotateSidesCheckbox.checked())
-  ) {
+    (rotateSidesCheckbox && rotateSidesCheckbox.checked()) ||
+    (audioBeatCheckbox && audioBeatCheckbox.checked());
+
+  if (anyAnim) {
     loop();
   } else {
     noLoop();
@@ -435,6 +535,39 @@ function windowResized() {
 
 function redrawCanvas() {
   redraw();
+}
+
+// ----------------------------------------------------------
+// AUDIO HELPERS
+// ----------------------------------------------------------
+function toggleAudio() {
+  if (!audio) return;
+  if (audio.isPlaying()) {
+    audio.pause();
+    audioPlayButton.html("Play audio");
+  } else {
+    audio.loop();
+    audioPlayButton.html("Pause audio");
+    if (!amplitudeAnalyzer) {
+      amplitudeAnalyzer = new p5.Amplitude();
+      amplitudeAnalyzer.setInput(audio);
+    }
+  }
+}
+
+function handleAudioFile(file) {
+  if (!file || !file.type.startsWith("audio")) return;
+  if (audio) {
+    audio.stop();
+  }
+  // load from uploaded file
+  audio = loadSound(file.data, () => {
+    if (!amplitudeAnalyzer) {
+      amplitudeAnalyzer = new p5.Amplitude();
+    }
+    amplitudeAnalyzer.setInput(audio);
+    audioPlayButton.html("Play audio");
+  });
 }
 
 // ----------------------------------------------------------
@@ -567,6 +700,7 @@ function drawSplitGlyph(
   const pathB = gB.getPath(xBase + offB, yBase, sizeB);
 
   function drawHalf(path, rx, ry, rw, rh) {
+    // stroke
     if (outlineWidth > 0) {
       ctx.save();
       ctx.beginPath();
@@ -588,6 +722,7 @@ function drawSplitGlyph(
       ctx.restore();
     }
 
+    // fill on top
     ctx.save();
     ctx.beginPath();
     ctx.rect(rx, ry, rw, rh);
@@ -607,25 +742,33 @@ function drawSplitGlyph(
   let aOnTop = true;
 
   if (rotateActive) {
-    // sideMode: 0 = A left/B right, 1 = A top/B bottom,
-    //           2 = A right/B left, 3 = A bottom/B top
+    // sideMode cycle driven by animation / beat:
+    // 0 = A left / B right
+    // 1 = A top  / B bottom
+    // 2 = A right / B left
+    // 3 = A left / B right again (no bottom state)
     const sm = sideMode % 4;
-    if (sm === 0) { // left/right, A left
+
+    if (sm === 0) {
+      // LEFT
       effMode = "vertical";
       aOnLeft = true;
-      aOnTop = true;
-    } else if (sm === 1) { // top/bottom, A top
+      aOnTop = true; // irrelevant vertically
+    } else if (sm === 1) {
+      // TOP
       effMode = "horizontal";
       aOnTop = true;
-      aOnLeft = true;
-    } else if (sm === 2) { // left/right, A right
+      aOnLeft = true; // irrelevant horizontally
+    } else if (sm === 2) {
+      // RIGHT
       effMode = "vertical";
       aOnLeft = false;
       aOnTop = true;
-    } else { // sm === 3, top/bottom, A bottom
-      effMode = "horizontal";
-      aOnTop = false;
+    } else {
+      // back to LEFT
+      effMode = "vertical";
       aOnLeft = true;
+      aOnTop = true;
     }
   } else {
     if (mode === "vertical") {
@@ -810,30 +953,66 @@ function draw() {
   const alignMode = alignSelect.value();
   const lineH = lineHeightSlider.value();
 
-  // Animated cut
+  // ----------------- AUDIO BEAT LOGIC -----------------
+  let beatMode =
+    audioBeatCheckbox &&
+    audioBeatCheckbox.checked() &&
+    audio &&
+    amplitudeAnalyzer;
+  let audioLevel = 0;
+  if (beatMode) {
+    audioLevel = amplitudeAnalyzer.getLevel();
+    const sens = audioSensitivitySlider.value(); // 0..1
+    const threshold = 0.02 + (1 - sens) * 0.2; // more sensitivity -> lower threshold
+
+    if (audioLevel > threshold && lastAudioLevel <= threshold) {
+      // simple beat trigger
+      swapSidesBeat = !swapSidesBeat;
+      sideModeBeat = (sideModeBeat + 1) % 4;
+    }
+    lastAudioLevel = audioLevel;
+  }
+
+  // ----------------- CUT ANIMATION -----------------
   let baseCut = cutSlider.value() / 100;
   let cutRatio = baseCut;
-  if (animateCheckbox && animateCheckbox.checked()) {
+
+  if (!beatMode && animateCheckbox && animateCheckbox.checked()) {
     const t = millis() * 0.001 * animSpeedSlider.value();
     const amp = animAmplitudeSlider.value();
     const delta = Math.sin(t) * amp;
     cutRatio = constrain(baseCut + delta, 0.0, 1.0);
+  } else if (beatMode) {
+    const sens = audioSensitivitySlider.value();
+    const maxBeatJitter = 0.4; // how far cut can move
+    const beatAmount = constrain(audioLevel * (0.5 + sens), 0, 1);
+    cutRatio = constrain(
+      baseCut + (beatAmount - 0.3) * maxBeatJitter,
+      0.0,
+      1.0
+    );
   }
 
-  // Animated side flip
+  // ----------------- SIDE / ROTATION ANIMATION -----------------
   let swapSidesGlobal = false;
-  if (alternateSideCheckbox && alternateSideCheckbox.checked()) {
+  if (!beatMode && alternateSideCheckbox && alternateSideCheckbox.checked()) {
     const t2 = millis() * 0.001 * alternateSideSpeedSlider.value();
     swapSidesGlobal = Math.sin(t2) > 0;
   }
 
-  // Animated rotation of sides (L -> T -> R -> B)
   let rotateActive = false;
   let sideModeGlobal = 0;
-  if (rotateSidesCheckbox && rotateSidesCheckbox.checked()) {
+  if (!beatMode && rotateSidesCheckbox && rotateSidesCheckbox.checked()) {
     rotateActive = true;
     const t3 = millis() * 0.001 * rotateSidesSpeedSlider.value();
     sideModeGlobal = Math.floor(t3) % 4;
+  }
+
+  if (beatMode) {
+    // Beat drives side & rotation
+    swapSidesGlobal = swapSidesBeat;
+    rotateActive = true;
+    sideModeGlobal = sideModeBeat;
   }
 
   const mode = axisModeSelect.value();
