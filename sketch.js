@@ -1,6 +1,6 @@
 // ----------------------------------------------------------
 // HYBRID FONT POSTER TOOL
-// Default page: 1080 x 1920
+// Default page: 1080 x 1920 (H=1920)
 // Default align: center
 // Default bg + fill: #00f900
 // Default outline color: #feffff, thickness: 40px
@@ -11,11 +11,11 @@
 // Audio reactive: rotate sides from tempo-ish peaks
 // Orientation = page format ONLY (horizontal/vertical), NOT text direction
 // Quarters split mode (A/B/A/B) with audio beat rotation only
-// Per-line size / line-height / tracking overrides
-// Background: solid, gradient, image, or VIDEO in random squares
+// Per-line sliders: size, line-height, spacing (with live values)
+// Background: solid, gradient, image, or VIDEO in random squares / mosaic
 // Video: 2 videos, alternating on parametric beat frequency
-//        random tiles OR mosaic (video scaled to poster and sliced)
-//        inversion only affects video, not colored background
+//        inversion only affects video, not background color
+// PNG EXPORT: single frame + image sequence start/stop
 // ----------------------------------------------------------
 
 // opentype + p5.sound must be loaded in index.html
@@ -67,7 +67,6 @@ let videoAltBeatsSlider = null;      // beat frequency for alternation
 let activeVideoIndex = 0;            // 0 = video1, 1 = video2
 let mosaicBuffer = null;             // offscreen buffer for mosaic inversion
 
-let animateCheckbox; // kept for consistency, not used for cut
 let alternateSideCheckbox, alternateSideSpeedSlider;
 let rotateSidesCheckbox, rotateSidesSpeedSlider;
 
@@ -79,11 +78,18 @@ const DEFAULT_UI_GREEN = "#1f6a3a";
 let lineSettings = []; // [{sizeFactor, lineHeightFactor, trackingDelta}, ...]
 let lineSettingsContainer;
 
-// video tiles + beat-slowed motion
+// video tiles + beat driven motion
 let videoTiles = [];          // [{x,y,w,h}, ...]
 let videoBeatCounter = 0;     // counts detected beats
 let videoTileNeedsUpdate = false;
-let videoInvert = false;      // whether to invert video bg this "slow beat"
+let videoInvert = false;      // whether to invert video for this slow beat
+
+// PNG sequence export
+let exportSequence = false;
+let sequencePrefixInput;
+let sequenceFramesInput;
+let sequenceCurrentFrame = 0;
+let sequenceTotalFrames = 0;
 
 // ----------------------------------------------------------
 // PRELOAD
@@ -104,7 +110,7 @@ function preload() {
 // ----------------------------------------------------------
 function setup() {
   posterWidth = 1080;
-  posterHeight = 1920;
+  posterHeight = 1920; // default height 1920
 
   const main = createDiv();
   main.style("display", "flex");
@@ -220,8 +226,8 @@ function setup() {
   alignSelect.selected("center");
   alignSelect.changed(redrawCanvas);
 
-  formatSec.child(createSpan("Line height (can be negative)"));
-  lineHeightSlider = createSlider(-1.5, 3.0, 0.9, 0.05);
+  formatSec.child(createSpan("Global line height (can be negative, % of size)"));
+  lineHeightSlider = createSlider(-150, 300, 90, 5);
   lineHeightSlider.parent(formatSec);
   lineHeightSlider.input(redrawCanvas);
 
@@ -309,7 +315,7 @@ function setup() {
   trackingSlider.parent(textSec);
   trackingSlider.input(redrawCanvas);
 
-  const perLineLabel = createSpan("Per-line overrides: size %, line-height %, Δtracking");
+  const perLineLabel = createSpan("Per line sliders: size %, LH %, spacing Δ");
   perLineLabel.parent(textSec);
   perLineLabel.style("margin-top", "4px");
   perLineLabel.style("font-size", "11px");
@@ -318,7 +324,7 @@ function setup() {
   lineSettingsContainer.parent(textSec);
   lineSettingsContainer.style("display", "flex");
   lineSettingsContainer.style("flex-direction", "column");
-  lineSettingsContainer.style("gap", "2px");
+  lineSettingsContainer.style("gap", "4px");
   lineSettingsContainer.style("border", "1px dashed #cccccc");
   lineSettingsContainer.style("padding", "4px");
   updateLineSettingsUI();
@@ -451,7 +457,7 @@ function setup() {
   videoAltBeatsSlider.parent(bgSec);
   videoAltBeatsSlider.input(redrawCanvas);
 
-  // ANIMATION (no cut animation)
+  // ANIMATION
   const animSec = section("Animation");
 
   alternateSideCheckbox = createCheckbox("Alternate font side (flip A/B)", false);
@@ -463,7 +469,7 @@ function setup() {
   alternateSideSpeedSlider.parent(animSec);
   alternateSideSpeedSlider.input(redrawCanvas);
 
-  rotateSidesCheckbox = createCheckbox("Rotate sides (L -> T -> R -> L)", false);
+  rotateSidesCheckbox = createCheckbox("Rotate sides (L, T, R, B)", false);
   rotateSidesCheckbox.parent(animSec);
   rotateSidesCheckbox.changed(handleAnimationState);
 
@@ -490,7 +496,7 @@ function setup() {
   audioPlayButton.parent(audioSec);
   audioPlayButton.mousePressed(toggleAudio);
 
-  audioBeatCheckbox = createCheckbox("Drive animation from audio beat (rotation + video)", false);
+  audioBeatCheckbox = createCheckbox("Drive animation from audio beat", false);
   audioBeatCheckbox.parent(audioSec);
   audioBeatCheckbox.changed(handleAnimationState);
 
@@ -501,15 +507,41 @@ function setup() {
 
   // EXPORT
   const exportSec = section("Export");
+
   const savePngBtn = createButton("Save PNG frame");
   savePngBtn.parent(exportSec);
   savePngBtn.mousePressed(() => saveCanvas("hybrid_poster", "png"));
+
+  exportSec.child(createSpan("Sequence prefix"));
+  sequencePrefixInput = createInput("seq_");
+  sequencePrefixInput.parent(exportSec);
+  sequencePrefixInput.style("width", "100%");
+
+  exportSec.child(createSpan("Number of frames"));
+  sequenceFramesInput = createInput("120");
+  sequenceFramesInput.parent(exportSec);
+  sequenceFramesInput.attribute("type", "number");
+  sequenceFramesInput.style("width", "100%");
+
+  const seqButtonsRow = createDiv();
+  seqButtonsRow.parent(exportSec);
+  seqButtonsRow.style("display", "flex");
+  seqButtonsRow.style("gap", "6px");
+  seqButtonsRow.style("margin-top", "4px");
+
+  const startSeqBtn = createButton("Start PNG sequence");
+  startSeqBtn.parent(seqButtonsRow);
+  startSeqBtn.mousePressed(startSequenceExport);
+
+  const stopSeqBtn = createButton("Stop sequence");
+  stopSeqBtn.parent(seqButtonsRow);
+  stopSeqBtn.mousePressed(stopSequenceExport);
 
   handleAnimationState();
 }
 
 // ----------------------------------------------------------
-// PER-LINE SETTINGS
+// PER LINE SETTINGS (SLIDERS)
 // ----------------------------------------------------------
 function ensureLineSettings(n) {
   while (lineSettings.length < n) {
@@ -532,59 +564,94 @@ function updateLineSettingsUI() {
   lineSettingsContainer.html("");
 
   for (let i = 0; i < lines.length; i++) {
-    const row = createDiv();
-    row.parent(lineSettingsContainer);
-    row.style("display", "flex");
-    row.style("gap", "4px");
-    row.style("align-items", "center");
+    const wrapper = createDiv();
+    wrapper.parent(lineSettingsContainer);
+    wrapper.style("border-bottom", "1px dashed #ddd");
+    wrapper.style("padding", "2px 0");
 
-    const label = createSpan("L" + (i + 1));
-    label.parent(row);
-    label.style("width", "22px");
+    const titleRow = createDiv();
+    titleRow.parent(wrapper);
+    titleRow.style("display", "flex");
+    titleRow.style("justify-content", "space-between");
+    titleRow.style("font-size", "11px");
 
-    const sizeInput = createInput((lineSettings[i].sizeFactor * 100).toFixed(0));
-    sizeInput.parent(row);
-    sizeInput.attribute("type", "number");
-    sizeInput.style("width", "45px");
-    const sizeLabel = createSpan("%");
-    sizeLabel.parent(row);
+    const label = createSpan("Line " + (i + 1));
+    label.parent(titleRow);
 
-    const lhInput = createInput((lineSettings[i].lineHeightFactor * 100).toFixed(0));
-    lhInput.parent(row);
-    lhInput.attribute("type", "number");
-    lhInput.style("width", "45px");
-    const lhLabel = createSpan("% LH");
-    lhLabel.parent(row);
+    const preview = createSpan(lines[i] || "(empty)");
+    preview.parent(titleRow);
+    preview.style("opacity", "0.6");
 
-    const trackInput = createInput(lineSettings[i].trackingDelta.toFixed(0));
-    trackInput.parent(row);
-    trackInput.attribute("type", "number");
-    trackInput.style("width", "55px");
-    const trackLabel = createSpan("Δtrk");
-    trackLabel.parent(row);
+    // SIZE slider
+    const sizeRow = createDiv();
+    sizeRow.parent(wrapper);
+    sizeRow.style("display", "flex");
+    sizeRow.style("align-items", "center");
+    sizeRow.style("gap", "4px");
+    const sizeLbl = createSpan("Size");
+    sizeLbl.parent(sizeRow);
 
-    sizeInput.input(() => {
-      let v = float(sizeInput.value());
-      if (!isNaN(v)) {
-        lineSettings[i].sizeFactor = constrain(v / 100, 0.2, 5.0);
-        redrawCanvas();
-      }
+    const sizeVal = createSpan((lineSettings[i].sizeFactor * 100).toFixed(0) + "%");
+    sizeVal.parent(sizeRow);
+    sizeVal.style("width", "40px");
+
+    const sizeSliderLine = createSlider(20, 500, lineSettings[i].sizeFactor * 100, 1);
+    sizeSliderLine.parent(sizeRow);
+    sizeSliderLine.style("flex", "1");
+
+    sizeSliderLine.input(() => {
+      const v = sizeSliderLine.value();
+      lineSettings[i].sizeFactor = constrain(v / 100, 0.2, 5.0);
+      sizeVal.html(v.toFixed(0) + "%");
+      redrawCanvas();
     });
 
-    lhInput.input(() => {
-      let v = float(lhInput.value());
-      if (!isNaN(v)) {
-        lineSettings[i].lineHeightFactor = constrain(v / 100, 0.2, 5.0);
-        redrawCanvas();
-      }
+    // LINE HEIGHT slider
+    const lhRow = createDiv();
+    lhRow.parent(wrapper);
+    lhRow.style("display", "flex");
+    lhRow.style("align-items", "center");
+    lhRow.style("gap", "4px");
+    const lhLbl = createSpan("LH");
+    lhLbl.parent(lhRow);
+
+    const lhVal = createSpan((lineSettings[i].lineHeightFactor * 100).toFixed(0) + "%");
+    lhVal.parent(lhRow);
+    lhVal.style("width", "40px");
+
+    const lhSlider = createSlider(20, 300, lineSettings[i].lineHeightFactor * 100, 1);
+    lhSlider.parent(lhRow);
+    lhSlider.style("flex", "1");
+
+    lhSlider.input(() => {
+      const v = lhSlider.value();
+      lineSettings[i].lineHeightFactor = constrain(v / 100, 0.2, 3.0);
+      lhVal.html(v.toFixed(0) + "%");
+      redrawCanvas();
     });
 
-    trackInput.input(() => {
-      let v = float(trackInput.value());
-      if (!isNaN(v)) {
-        lineSettings[i].trackingDelta = constrain(v, -200, 200);
-        redrawCanvas();
-      }
+    // TRACKING slider
+    const trRow = createDiv();
+    trRow.parent(wrapper);
+    trRow.style("display", "flex");
+    trRow.style("align-items", "center");
+    trRow.style("gap", "4px");
+    const trLbl = createSpan("Spacing");
+    trLbl.parent(trRow);
+
+    const trVal = createSpan(lineSettings[i].trackingDelta.toFixed(0));
+    trVal.parent(trRow);
+    trVal.style("width", "40px");
+
+    const trSlider = createSlider(-200, 200, lineSettings[i].trackingDelta, 1);
+    trSlider.parent(trRow);
+    trSlider.style("flex", "1");
+
+    trSlider.input(() => {
+      const v = trSlider.value();
+      lineSettings[i].trackingDelta = v;
+      trVal.html(v.toFixed(0));
+      redrawCanvas();
     });
   }
 }
@@ -667,7 +734,8 @@ function handleAnimationState() {
   const anyAnim =
     (alternateSideCheckbox && alternateSideCheckbox.checked()) ||
     (rotateSidesCheckbox && rotateSidesCheckbox.checked()) ||
-    (audioBeatCheckbox && audioBeatCheckbox.checked());
+    (audioBeatCheckbox && audioBeatCheckbox.checked()) ||
+    exportSequence; // exporting sequence also forces looping
 
   if (anyAnim) {
     loop();
@@ -684,7 +752,7 @@ function redrawCanvas() {
 }
 
 // ----------------------------------------------------------
-// AUDIO HELPERS
+// AUDIO
 // ----------------------------------------------------------
 function toggleAudio() {
   if (!audio) return;
@@ -716,7 +784,7 @@ function handleAudioFile(file) {
 }
 
 // ----------------------------------------------------------
-// FONT / BACKGROUND FILE HANDLERS
+// FONT / BG FILE HANDLERS
 // ----------------------------------------------------------
 function handleFontFile(file, which) {
   if (!file) return;
@@ -1020,7 +1088,7 @@ function drawSplitGlyph(
 }
 
 // ----------------------------------------------------------
-// VIDEO TILES UTILS
+// VIDEO TILES
 // ----------------------------------------------------------
 function updateVideoTiles() {
   videoTiles = [];
@@ -1038,13 +1106,13 @@ function updateVideoTiles() {
 }
 
 // ----------------------------------------------------------
-// BACKGROUND (including video tiles)
+// BACKGROUND
 // ----------------------------------------------------------
 function drawBackground() {
   const mode = bgModeSelect.value();
 
   if (mode === "video") {
-    // colored background behind video (Color 1) – stays untouched
+    // colored background behind video
     noStroke();
     fill(bgColor1Picker.value());
     rect(0, 0, width, height);
@@ -1069,7 +1137,6 @@ function drawBackground() {
       const vH = currentVideo.height;
 
       if (tileMode === "mosaic") {
-        // --- MOSAIC MODE ---
         const canvasRatio = width / height;
         const vidRatio = vW / vH;
         let drawW, drawH, dx, dy;
@@ -1115,7 +1182,7 @@ function drawBackground() {
         pop();
 
       } else {
-        // --- RANDOM TILES MODE ---
+        // random tiles mode
         push();
         for (let i = 0; i < videoTiles.length; i++) {
           const t = videoTiles[i];
@@ -1176,7 +1243,7 @@ function drawBackground() {
 }
 
 // ----------------------------------------------------------
-// SHAPING AND MAIN DRAW (always horizontal text)
+// SHAPING AND MAIN DRAW
 // ----------------------------------------------------------
 function shapeLinesHorizontal(txt, baseSize, baseTracking, margin) {
   const rawLines = txt.split("\n");
@@ -1190,7 +1257,6 @@ function shapeLinesHorizontal(txt, baseSize, baseTracking, margin) {
 
     const sizeLine = baseSize * ls.sizeFactor;
     const trackingLine = baseTracking + ls.trackingDelta;
-    const lhFactor = ls.lineHeightFactor;
 
     let w = 0;
 
@@ -1213,13 +1279,33 @@ function shapeLinesHorizontal(txt, baseSize, baseTracking, margin) {
       width: w,
       size: sizeLine,
       tracking: trackingLine,
-      lhFactor: lhFactor
+      lhFactor: ls.lineHeightFactor
     });
   }
 
   return shaped;
 }
 
+// ----------------------------------------------------------
+// PNG SEQUENCE EXPORT
+// ----------------------------------------------------------
+function startSequenceExport() {
+  const frames = int(sequenceFramesInput.value());
+  if (isNaN(frames) || frames <= 0) return;
+  sequenceTotalFrames = frames;
+  sequenceCurrentFrame = 0;
+  exportSequence = true;
+  handleAnimationState();
+}
+
+function stopSequenceExport() {
+  exportSequence = false;
+  handleAnimationState();
+}
+
+// ----------------------------------------------------------
+// DRAW
+// ----------------------------------------------------------
 function draw() {
   clear();
 
@@ -1242,6 +1328,11 @@ function draw() {
     text("Load Font A and Font B to start.", 40, 60);
     pop();
     pop();
+
+    // still export empty if user triggered sequence
+    if (exportSequence) {
+      saveSequenceFrame();
+    }
     return;
   }
 
@@ -1249,7 +1340,8 @@ function draw() {
   const baseSize = sizeSlider.value();
   const baseTracking = trackingSlider.value();
   const alignMode = alignSelect.value();
-  const globalLineH = lineHeightSlider.value();
+  const globalLineHPercent = lineHeightSlider.value();
+  const globalLineH = globalLineHPercent / 100.0;
 
   let beatMode =
     audioBeatCheckbox &&
@@ -1298,7 +1390,6 @@ function draw() {
   }
 
   const mode = axisModeSelect.value();
-
   const baseCut = cutSlider.value() / 100;
   let cutRatio = baseCut;
 
@@ -1307,7 +1398,7 @@ function draw() {
   } else if (mode === "horizontal") {
     cutLabel.html("Cut position (0 = bottom, 100 = top)");
   } else {
-    cutLabel.html("Quarters (A/B/A/B) — cut ignored");
+    cutLabel.html("Quarters (A/B/A/B) – cut ignored");
   }
 
   const fillColor = fillPicker.value();
@@ -1402,4 +1493,24 @@ function draw() {
   }
 
   pop();
+
+  // sequence export (PNG)
+  if (exportSequence) {
+    saveSequenceFrame();
+  }
+}
+
+// save one frame of the PNG sequence
+function saveSequenceFrame() {
+  const prefix = sequencePrefixInput ? sequencePrefixInput.value() : "seq_";
+  const safePrefix = prefix && prefix.length > 0 ? prefix : "seq_";
+  const idxStr = nf(sequenceCurrentFrame, 4); // 0000,0001,...
+
+  saveCanvas(safePrefix + idxStr, "png");
+
+  sequenceCurrentFrame++;
+  if (sequenceCurrentFrame >= sequenceTotalFrames) {
+    exportSequence = false;
+    handleAnimationState();
+  }
 }
