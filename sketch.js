@@ -15,6 +15,7 @@
 // Background: solid, gradient, image, or VIDEO in random squares
 // Video: 2 videos, alternating on parametric beat frequency
 //        random tiles OR mosaic (video scaled to poster and sliced)
+//        inversion only affects video, not colored background
 // ----------------------------------------------------------
 
 // opentype + p5.sound must be loaded in index.html
@@ -64,6 +65,7 @@ let bgVideoInput2 = null;
 let videoTileModeSelect = null;      // "random" or "mosaic"
 let videoAltBeatsSlider = null;      // beat frequency for alternation
 let activeVideoIndex = 0;            // 0 = video1, 1 = video2
+let mosaicBuffer = null;             // offscreen buffer for mosaic inversion
 
 let animateCheckbox; // kept for consistency, not used for cut
 let alternateSideCheckbox, alternateSideSpeedSlider;
@@ -1018,7 +1020,7 @@ function drawSplitGlyph(
 }
 
 // ----------------------------------------------------------
-// BACKGROUND (including video tiles)
+// VIDEO TILES UTILS
 // ----------------------------------------------------------
 function updateVideoTiles() {
   videoTiles = [];
@@ -1035,11 +1037,14 @@ function updateVideoTiles() {
   }
 }
 
+// ----------------------------------------------------------
+// BACKGROUND (including video tiles)
+// ----------------------------------------------------------
 function drawBackground() {
   const mode = bgModeSelect.value();
 
   if (mode === "video") {
-    // colored background behind video (Color 1)
+    // colored background behind video (Color 1) – stays untouched
     noStroke();
     fill(bgColor1Picker.value());
     rect(0, 0, width, height);
@@ -1060,14 +1065,15 @@ function drawBackground() {
       }
 
       const tileMode = videoTileModeSelect ? videoTileModeSelect.value() : "random";
-
       const vW = currentVideo.width;
       const vH = currentVideo.height;
 
-      let drawW, drawH, dx, dy, scaleV;
       if (tileMode === "mosaic") {
+        // --- MOSAIC MODE ---
         const canvasRatio = width / height;
         const vidRatio = vW / vH;
+        let drawW, drawH, dx, dy;
+
         if (vidRatio > canvasRatio) {
           drawH = height;
           drawW = vidRatio * drawH;
@@ -1077,36 +1083,58 @@ function drawBackground() {
         }
         dx = (width - drawW) / 2;
         dy = (height - drawH) / 2;
-        scaleV = drawW / vW;
-      }
 
-      push();
-      for (let i = 0; i < videoTiles.length; i++) {
-        const t = videoTiles[i];
-
-        if (tileMode === "mosaic") {
-          const sx = (t.x - dx) / scaleV;
-          const sy = (t.y - dy) / scaleV;
-          const sw = t.w / scaleV;
-          const sh = t.h / scaleV;
-
-          image(
-            currentVideo,
-            t.x, t.y, t.w, t.h,
-            sx, sy, sw, sh
-          );
-        } else {
-          image(currentVideo, t.x, t.y, t.w, t.h);
+        if (!mosaicBuffer || mosaicBuffer.width !== width || mosaicBuffer.height !== height) {
+          mosaicBuffer = createGraphics(width, height);
         }
-      }
-      pop();
 
-      if (videoInvert) {
+        mosaicBuffer.push();
+        mosaicBuffer.clear();
+        mosaicBuffer.image(currentVideo, dx, dy, drawW, drawH);
+        mosaicBuffer.pop();
+
+        if (videoInvert) {
+          mosaicBuffer.loadPixels();
+          for (let i = 0; i < mosaicBuffer.pixels.length; i += 4) {
+            mosaicBuffer.pixels[i + 0] = 255 - mosaicBuffer.pixels[i + 0];
+            mosaicBuffer.pixels[i + 1] = 255 - mosaicBuffer.pixels[i + 1];
+            mosaicBuffer.pixels[i + 2] = 255 - mosaicBuffer.pixels[i + 2];
+          }
+          mosaicBuffer.updatePixels();
+        }
+
         push();
-        blendMode(DIFFERENCE);
-        noStroke();
-        fill(255);
-        rect(0, 0, width, height);
+        for (let i = 0; i < videoTiles.length; i++) {
+          const t = videoTiles[i];
+          image(
+            mosaicBuffer,
+            t.x, t.y, t.w, t.h,
+            t.x, t.y, t.w, t.h
+          );
+        }
+        pop();
+
+      } else {
+        // --- RANDOM TILES MODE ---
+        push();
+        for (let i = 0; i < videoTiles.length; i++) {
+          const t = videoTiles[i];
+
+          if (!videoInvert) {
+            image(currentVideo, t.x, t.y, t.w, t.h);
+          } else {
+            const g = createGraphics(t.w, t.h);
+            g.image(currentVideo, 0, 0, t.w, t.h);
+            g.loadPixels();
+            for (let p = 0; p < g.pixels.length; p += 4) {
+              g.pixels[p + 0] = 255 - g.pixels[p + 0];
+              g.pixels[p + 1] = 255 - g.pixels[p + 1];
+              g.pixels[p + 2] = 255 - g.pixels[p + 2];
+            }
+            g.updatePixels();
+            image(g, t.x, t.y);
+          }
+        }
         pop();
       }
     }
