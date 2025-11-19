@@ -6,9 +6,10 @@
 // Default outline color: #feffff, thickness: 40px
 // Zoom, split, outline
 // Font A/B hybrid, transforms
-// Layout, negative line height, vertical/horizontal
+// Layout, negative line height (horizontal text)
 // Animation: cut LFO, side flip, rotation
 // Audio reactive: rotate sides from tempo-ish peaks
+// Orientation = page format ONLY (horizontal/vertical), NOT text direction
 // ----------------------------------------------------------
 
 // opentype + p5.sound must be loaded in index.html
@@ -173,8 +174,8 @@ function setup() {
   orientationSelect.parent(orientRow);
   orientationSelect.option("Horizontal", "horizontal");
   orientationSelect.option("Vertical", "vertical");
-  orientationSelect.selected("horizontal");
-  orientationSelect.changed(redrawCanvas);
+  orientationSelect.selected("vertical");
+  orientationSelect.changed(onOrientationChange); // page format only
 
   const alignRow = createDiv();
   alignRow.parent(formatSec);
@@ -499,6 +500,26 @@ function applyFormat() {
     resizeCanvas(posterWidth, posterHeight);
     redrawCanvas();
   }
+}
+
+// orientation = page format only (swap w/h if needed)
+function onOrientationChange() {
+  const val = orientationSelect.value();
+  let w = posterWidth;
+  let h = posterHeight;
+
+  if (val === "horizontal" && h > w) {
+    const tmp = w; w = h; h = tmp;
+  } else if (val === "vertical" && w > h) {
+    const tmp = w; w = h; h = tmp;
+  }
+
+  posterWidth = w;
+  posterHeight = h;
+  resizeCanvas(posterWidth, posterHeight);
+  canvasWidthInput.value(posterWidth.toString());
+  canvasHeightInput.value(posterHeight.toString());
+  redrawCanvas();
 }
 
 function handleAnimationState() {
@@ -848,7 +869,7 @@ function drawBackground() {
 }
 
 // ----------------------------------------------------------
-// SHAPING AND MAIN DRAW
+// SHAPING AND MAIN DRAW (always horizontal text)
 // ----------------------------------------------------------
 function shapeLinesHorizontal(txt, baseSize, tracking, margin) {
   const lines = [];
@@ -911,10 +932,14 @@ function draw() {
   clear();
 
   const z = zoomSlider ? zoomSlider.value() : 1;
+  const cx = posterWidth / 2;
+  const cy = posterHeight / 2;
+
   push();
+  // keep zoom centered on the poster
   translate(width / 2, height / 2);
   scale(z);
-  translate(-width / 2, -height / 2);
+  translate(-cx, -cy);
 
   drawBackground();
 
@@ -932,7 +957,6 @@ function draw() {
   const txt = textInput.value();
   const baseSize = sizeSlider.value();
   const tracking = trackingSlider.value();
-  const orientation = orientationSelect.value();
   const alignMode = alignSelect.value();
   const lineH = lineHeightSlider.value();
 
@@ -1023,77 +1047,25 @@ function draw() {
 
   const margin = baseSize * 0.4;
 
-  if (orientation === "horizontal") {
-    const shaped = shapeLinesHorizontal(txt, baseSize, tracking, margin);
-    let y = baseSize * 1.2;
+  // ALWAYS HORIZONTAL TEXT
+  const shaped = shapeLinesHorizontal(txt, baseSize, tracking, margin);
+  let y = baseSize * 1.2;
 
-    for (let li = 0; li < shaped.length; li++) {
-      const line = shaped[li];
-      let x;
-      const maxWidth = width - 2 * margin;
+  for (let li = 0; li < shaped.length; li++) {
+    const line = shaped[li];
+    let x;
+    const maxWidth = posterWidth - 2 * margin;
 
-      if (alignMode === "left") {
-        x = margin;
-      } else if (alignMode === "center") {
-        x = margin + (maxWidth - line.width) / 2;
-      } else {
-        x = margin + (maxWidth - line.width);
-      }
-
-      for (let ci = 0; ci < line.text.length; ci++) {
-        const ch = line.text[ci];
-        const gA = otFontA.charToGlyph(ch);
-        const gB = otFontB.charToGlyph(ch);
-        if (!gA || !gB) continue;
-
-        drawSplitGlyph(
-          ch,
-          x,
-          y,
-          baseSize,
-          mode,
-          cutRatio,
-          fillColor,
-          outlineColor,
-          outlineWidth,
-          joinType,
-          blurAmount,
-          swapSidesGlobal,
-          rotateActive,
-          sideModeGlobal
-        );
-
-        const advA = glyphAdvance(gA, otFontA, baseSize);
-        const advB = glyphAdvance(gB, otFontB, baseSize);
-        const adv = (advA + advB) * 0.5;
-
-        x += adv + tracking;
-      }
-
-      y += baseSize * lineH;
-    }
-  } else {
-    let xStart;
     if (alignMode === "left") {
-      xStart = baseSize * 0.6;
+      x = margin;
     } else if (alignMode === "center") {
-      xStart = width / 2;
+      x = margin + (maxWidth - line.width) / 2;
     } else {
-      xStart = width - baseSize * 1.6;
+      x = margin + (maxWidth - line.width);
     }
 
-    let x = xStart;
-    let y = baseSize * 1.2;
-
-    for (let i = 0; i < txt.length; i++) {
-      const ch = txt[i];
-
-      if (ch === "\n") {
-        x += baseSize * 1.1;
-        y = baseSize * 1.2;
-        continue;
-      }
-
+    for (let ci = 0; ci < line.text.length; ci++) {
+      const ch = line.text[ci];
       const gA = otFontA.charToGlyph(ch);
       const gB = otFontB.charToGlyph(ch);
       if (!gA || !gB) continue;
@@ -1115,13 +1087,14 @@ function draw() {
         sideModeGlobal
       );
 
-      y += baseSize * lineH;
+      const advA = glyphAdvance(gA, otFontA, baseSize);
+      const advB = glyphAdvance(gB, otFontB, baseSize);
+      const adv = (advA + advB) * 0.5;
 
-      if (y > height - baseSize) {
-        y = baseSize * 1.2;
-        x += baseSize * 1.1;
-      }
+      x += adv + tracking;
     }
+
+    y += baseSize * lineH;
   }
 
   pop();
