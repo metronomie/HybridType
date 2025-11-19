@@ -1,14 +1,14 @@
 // ----------------------------------------------------------
 // HYBRID FONT POSTER TOOL
-// - Default page: 1080 x 1920
-// - Default align: center
-// - Default bg + fill: #00f900
-// - Default outline color: #feffff, thickness: 40px
-// - Zoom, split, outline
-// - Font A/B hybrid, transforms
-// - Layout, negative line height, vertical/horizontal
-// - Animation: cut LFO, side flip, rotation
-// - Audio-reactive: rotate sides on tempo-like peaks
+// Default page: 1080 x 1920
+// Default align: center
+// Default bg + fill: #00f900
+// Default outline color: #feffff, thickness: 40px
+// Zoom, split, outline
+// Font A/B hybrid, transforms
+// Layout, negative line height, vertical/horizontal
+// Animation: cut LFO, side flip, rotation
+// Audio reactive: rotate sides from tempo-ish peaks
 // ----------------------------------------------------------
 
 // opentype + p5.sound must be loaded in index.html
@@ -29,7 +29,7 @@ let audioSensitivitySlider;
 let lastAudioLevel = 0;
 let swapSidesBeat = false;
 let sideModeBeat = 0;
-// beat-tracking helpers
+// beat tracking helpers
 let avgLevel = 0;
 let lastBeatTime = 0;
 
@@ -56,18 +56,15 @@ let rotateSidesCheckbox, rotateSidesSpeedSlider;
 
 let posterWidth, posterHeight;
 
-// UI text color
 const DEFAULT_UI_GREEN = "#1f6a3a";
 
 // ----------------------------------------------------------
-// PRELOAD: default fonts + default audio
+// PRELOAD
 // ----------------------------------------------------------
 function preload() {
-  // Default fonts (relative paths; adjust if needed)
   defaultFontABuffer = loadBytes("Fonts/Baskerville120Pro.otf");
   defaultFontBBuffer = loadBytes("Fonts/ESAllianzExtraBold.ttf");
 
-  // Default audio track
   soundFormats("mp3", "wav", "ogg");
   audio = loadSound("Music/Eliminator_The Hunt_01.wav", () => {
     amplitudeAnalyzer = new p5.Amplitude();
@@ -79,11 +76,9 @@ function preload() {
 // SETUP
 // ----------------------------------------------------------
 function setup() {
-  // Default poster size
   posterWidth = 1080;
   posterHeight = 1920;
 
-  // Main layout: left UI, right canvas
   const main = createDiv();
   main.style("display", "flex");
   main.style("flex-direction", "row");
@@ -91,7 +86,6 @@ function setup() {
   main.style("margin", "0");
   main.style("padding", "0");
 
-  // Left sidebar UI
   const ui = createDiv();
   ui.parent(main);
   ui.style("padding", "8px");
@@ -108,7 +102,6 @@ function setup() {
   ui.style("height", "100vh");
   ui.style("overflow-y", "auto");
 
-  // Canvas holder
   const canvasHolder = createDiv();
   canvasHolder.parent(main);
   canvasHolder.style("flex", "1 1 auto");
@@ -141,7 +134,7 @@ function setup() {
     return s;
   }
 
-  // ----------------- FORMAT / POSTER SECTION -----------------
+  // FORMAT
   const formatSec = section("Poster format");
 
   const formatRow = createDiv();
@@ -208,7 +201,7 @@ function setup() {
   zoomSlider.parent(formatSec);
   zoomSlider.input(redrawCanvas);
 
-  // ----------------- FONT SECTION -----------------
+  // FONTS
   const fontsSec = section("Fonts");
 
   fontsSec.child(createSpan("Font A"));
@@ -228,13 +221,12 @@ function setup() {
   fontBStatusP.style("margin", "2px 0 0 0");
 
   const hint = createP(
-    "Hybrid per glyph: left/top from A, right/bottom from B. Combine with layout, background, animation."
+    "Hybrid per glyph: left or top from A, right or bottom from B. Combine with layout, background, animation."
   );
   hint.parent(fontsSec);
   hint.style("margin", "6px 0 0 0");
   hint.style("font-size", "11px");
 
-  // Parse default fonts if available
   try {
     if (defaultFontABuffer && defaultFontABuffer.bytes) {
       otFontA = opentype.parse(defaultFontABuffer.bytes.buffer);
@@ -259,7 +251,7 @@ function setup() {
     fontBStatusP.html("Font B: error loading default");
   }
 
-  // ----------------- TEXT SECTION -----------------
+  // TEXT
   const textSec = section("Text");
 
   textSec.child(createSpan("Text (paragraphs, Enter for new lines)"));
@@ -285,7 +277,7 @@ function setup() {
   trackingSlider.parent(textSec);
   trackingSlider.input(redrawCanvas);
 
-  // ----------------- SPLIT SECTION -----------------
+  // SPLIT
   const splitSec = section("Split inside glyph");
 
   const modeRow = createDiv();
@@ -309,7 +301,7 @@ function setup() {
   cutSlider.parent(splitSec);
   cutSlider.input(redrawCanvas);
 
-  // ----------------- FONT TRANSFORMS -----------------
+  // FONT TRANSFORMS
   const transASec = section("Font A transform");
   transASec.child(createSpan("Size A (50 - 150 %)"));
   scaleASlider = createSlider(50, 150, 100, 1);
@@ -332,7 +324,7 @@ function setup() {
   offsetBSlider.parent(transBSec);
   offsetBSlider.input(redrawCanvas);
 
-  // ----------------- STYLING (FILL + OUTLINE) -----------------
+  // STYLING
   const styleSec = section("Styling");
 
   const fillControl = addColorControl(styleSec, "Fill", "#00f900", redrawCanvas);
@@ -351,12 +343,12 @@ function setup() {
   outlineRoundSlider.parent(styleSec);
   outlineRoundSlider.input(redrawCanvas);
 
-  styleSec.child(createSpan("Outline blurriness / glow (0 - 20)"));
-  outlineBlurSlider = createSlider(0, 20, 0, 1);
+  styleSec.child(createSpan("Outline blurriness / glow (0 - 40)"));
+  outlineBlurSlider = createSlider(0, 40, 10, 1);
   outlineBlurSlider.parent(styleSec);
   outlineBlurSlider.input(redrawCanvas);
 
-  // ----------------- BACKGROUND SECTION -----------------
+  // BACKGROUND
   const bgSec = section("Background");
 
   const bgModeRow = createDiv();
@@ -384,7 +376,7 @@ function setup() {
   bgImageInput = createFileInput(handleBgImageFile);
   bgImageInput.parent(bgSec);
 
-  // ----------------- ANIMATION SECTION -----------------
+  // ANIMATION
   const animSec = section("Animation");
 
   animateCheckbox = createCheckbox("Animate cut", false);
@@ -410,7 +402,7 @@ function setup() {
   alternateSideSpeedSlider.parent(animSec);
   alternateSideSpeedSlider.input(redrawCanvas);
 
-  rotateSidesCheckbox = createCheckbox("Rotate sides (L → T → R → L)", false);
+  rotateSidesCheckbox = createCheckbox("Rotate sides (L -> T -> R -> L)", false);
   rotateSidesCheckbox.parent(animSec);
   rotateSidesCheckbox.changed(handleAnimationState);
 
@@ -419,9 +411,8 @@ function setup() {
   rotateSidesSpeedSlider.parent(animSec);
   rotateSidesSpeedSlider.input(redrawCanvas);
 
-  // ----------------- AUDIO / BEAT SECTION -----------------
+  // AUDIO
   const audioSec = section("Audio / Beat");
-
   audioSec.child(createSpan("Default: Music/Eliminator_The Hunt_01.wav"));
 
   const audioFileRow = createDiv();
@@ -447,7 +438,7 @@ function setup() {
   audioSensitivitySlider.parent(audioSec);
   audioSensitivitySlider.input(redrawCanvas);
 
-  // ----------------- EXPORT -----------------
+  // EXPORT
   const exportSec = section("Export");
   const savePngBtn = createButton("Save PNG frame");
   savePngBtn.parent(exportSec);
@@ -525,9 +516,7 @@ function handleAnimationState() {
   }
 }
 
-function windowResized() {
-  // manual format
-}
+function windowResized() {}
 
 function redrawCanvas() {
   redraw();
@@ -566,7 +555,7 @@ function handleAudioFile(file) {
 }
 
 // ----------------------------------------------------------
-// FONT / BACKGROUND LOADING
+// FONT / BACKGROUND
 // ----------------------------------------------------------
 function handleFontFile(file, which) {
   if (!file) return;
@@ -687,8 +676,9 @@ function drawSplitGlyph(
   const w = xMax - xMin;
   const h = yMax - yMin;
 
+  // generous padding so blur has room outside
   const pad = outlineWidth > 0 || blurAmount > 0
-    ? outlineWidth * 2 + blurAmount + 4
+    ? outlineWidth * 2 + blurAmount * 4 + 8
     : 0;
 
   const ctx = drawingContext;
@@ -697,47 +687,57 @@ function drawSplitGlyph(
   const pathB = gB.getPath(x0 + offB, yBase, sizeB);
 
   function drawHalf(path, rx, ry, rw, rh) {
-    if (outlineWidth > 0) {
-      ctx.save();
-      ctx.beginPath();
-      ctx.rect(rx, ry, rw, rh);
-      ctx.clip();
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(rx, ry, rw, rh);
+    ctx.clip();
 
+    // 1) Outer glow (if blur > 0)
+    if (outlineWidth > 0 && blurAmount > 0) {
       ctx.lineWidth = outlineWidth;
       ctx.lineJoin = joinType;
       ctx.lineCap = joinType;
       ctx.strokeStyle = outlineColor;
 
-      ctx.shadowBlur = blurAmount;
+      ctx.shadowBlur = blurAmount * 4; // strong
       ctx.shadowColor = outlineColor;
       ctx.shadowOffsetX = 0;
       ctx.shadowOffsetY = 0;
 
       tracePathOnContext(ctx, path);
       ctx.stroke();
-      ctx.restore();
     }
 
-    ctx.save();
-    ctx.beginPath();
-    ctx.rect(rx, ry, rw, rh);
-    ctx.clip();
+    // 2) Sharp outline (always when outlineWidth > 0)
+    if (outlineWidth > 0) {
+      ctx.lineWidth = outlineWidth;
+      ctx.lineJoin = joinType;
+      ctx.lineCap = joinType;
+      ctx.strokeStyle = outlineColor;
 
+      ctx.shadowBlur = 0;
+      ctx.shadowColor = "rgba(0,0,0,0)";
+
+      tracePathOnContext(ctx, path);
+      ctx.stroke();
+    }
+
+    // 3) Fill
     ctx.shadowBlur = 0;
+    ctx.shadowColor = "rgba(0,0,0,0)";
     ctx.fillStyle = fillColor;
-
     tracePathOnContext(ctx, path);
     ctx.fill();
+
     ctx.restore();
   }
 
-  // Decide effective mode and which side gets A or B
+  // which side gets which font
   let effMode = mode;
   let aOnLeft = true;
   let aOnTop = true;
 
   if (rotateActive) {
-    // 0 = A left, 1 = A top, 2 = A right, 3 = A left again
     const sm = sideMode % 4;
     if (sm === 0) {
       effMode = "vertical";
@@ -848,7 +848,7 @@ function drawBackground() {
 }
 
 // ----------------------------------------------------------
-// LINE SHAPING FOR HORIZONTAL TEXT
+// SHAPING AND MAIN DRAW
 // ----------------------------------------------------------
 function shapeLinesHorizontal(txt, baseSize, tracking, margin) {
   const lines = [];
@@ -907,9 +907,6 @@ function shapeLinesHorizontal(txt, baseSize, tracking, margin) {
   return lines;
 }
 
-// ----------------------------------------------------------
-// MAIN DRAW
-// ----------------------------------------------------------
 function draw() {
   clear();
 
@@ -939,7 +936,6 @@ function draw() {
   const alignMode = alignSelect.value();
   const lineH = lineHeightSlider.value();
 
-  // AUDIO BEAT LOGIC (tempo-ish)
   let beatMode =
     audioBeatCheckbox &&
     audioBeatCheckbox.checked() &&
@@ -948,22 +944,20 @@ function draw() {
   let audioLevel = 0;
   if (beatMode) {
     audioLevel = amplitudeAnalyzer.getLevel();
-    const sens = audioSensitivitySlider.value(); // 0..1
+    const sens = audioSensitivitySlider.value();
 
-    // Rolling average of loudness
     if (avgLevel === 0) {
       avgLevel = audioLevel;
     } else {
-      const smoothing = 0.05 + sens * 0.1; // faster smoothing at higher sens
+      const smoothing = 0.05 + sens * 0.1;
       avgLevel = lerp(avgLevel, audioLevel, smoothing);
     }
 
-    // Margin above average: smaller margin -> more beats
     const margin = 0.03 + (1 - sens) * 0.12;
     const beatThreshold = avgLevel + margin;
 
     const now = millis();
-    const minBeatInterval = 150 + (1 - sens) * 350; // ms
+    const minBeatInterval = 150 + (1 - sens) * 350;
 
     if (
       audioLevel > beatThreshold &&
@@ -978,7 +972,6 @@ function draw() {
     lastAudioLevel = audioLevel;
   }
 
-  // CUT ANIMATION
   let baseCut = cutSlider.value() / 100;
   let cutRatio = baseCut;
 
@@ -988,10 +981,9 @@ function draw() {
     const delta = Math.sin(t) * amp;
     cutRatio = constrain(baseCut + delta, 0.0, 1.0);
   } else if (beatMode) {
-    cutRatio = baseCut; // fixed cut when driven by music
+    cutRatio = baseCut;
   }
 
-  // SIDE / ROTATION ANIMATION
   let swapSidesGlobal = false;
   if (!beatMode && alternateSideCheckbox && alternateSideCheckbox.checked()) {
     const t2 = millis() * 0.001 * alternateSideSpeedSlider.value();
@@ -1081,7 +1073,6 @@ function draw() {
       y += baseSize * lineH;
     }
   } else {
-    // vertical text flow
     let xStart;
     if (alignMode === "left") {
       xStart = baseSize * 0.6;
