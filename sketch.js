@@ -8,7 +8,7 @@
 // - Font A/B hybrid, transforms
 // - Layout, negative line height, vertical/horizontal
 // - Animation: cut LFO, side flip, rotation
-// - Audio-reactive option on beat (default track)
+// - Audio-reactive: rotate sides on tempo-like peaks
 // ----------------------------------------------------------
 
 // opentype + p5.sound must be loaded in index.html
@@ -29,13 +29,17 @@ let audioSensitivitySlider;
 let lastAudioLevel = 0;
 let swapSidesBeat = false;
 let sideModeBeat = 0;
+// beat-tracking helpers
+let avgLevel = 0;
+let lastBeatTime = 0;
 
 // UI globals
 let textInput;
 let sizeSlider, trackingSlider;
 let axisModeSelect, cutSlider, cutLabel;
 let fontAStatusP, fontBStatusP;
-let scaleASlider, offsetASlider, scaleBSlider, offsetBSlider;
+let scaleASlider, offsetASlider;
+let scaleBSlider, offsetBSlider;
 let fillPicker, outlinePicker;
 let outlineWidthSlider, outlineRoundSlider, outlineBlurSlider;
 
@@ -101,7 +105,6 @@ function setup() {
   ui.style("flex-direction", "column");
   ui.style("gap", "16px");
   ui.style("border-right", "1px solid #dddddd");
-  // make sidebar scrollable
   ui.style("height", "100vh");
   ui.style("overflow-y", "auto");
 
@@ -166,7 +169,6 @@ function setup() {
   applyFormatButton.parent(formatSec);
   applyFormatButton.mousePressed(applyFormat);
 
-  // Orientation and alignment
   const orientRow = createDiv();
   orientRow.parent(formatSec);
   orientRow.style("display", "flex");
@@ -193,11 +195,10 @@ function setup() {
   alignSelect.option("Left", "left");
   alignSelect.option("Center", "center");
   alignSelect.option("Right", "right");
-  alignSelect.selected("center"); // default center
+  alignSelect.selected("center");
   alignSelect.changed(redrawCanvas);
 
   formatSec.child(createSpan("Line height (can be negative)"));
-  // tighter default: 0.9
   lineHeightSlider = createSlider(-1.5, 3.0, 0.9, 0.05);
   lineHeightSlider.parent(formatSec);
   lineHeightSlider.input(redrawCanvas);
@@ -271,7 +272,6 @@ function setup() {
   textInput.style("border-radius", "4px");
   textInput.style("border", "1px solid " + DEFAULT_UI_GREEN);
   textInput.style("resize", "vertical");
-  // default text: ALL / CAPS / 1312
   textInput.value("ALL\nCAPS\n1312");
   textInput.input(redrawCanvas);
 
@@ -335,16 +335,14 @@ function setup() {
   // ----------------- STYLING (FILL + OUTLINE) -----------------
   const styleSec = section("Styling");
 
-  // Default fill color #00f900
   const fillControl = addColorControl(styleSec, "Fill", "#00f900", redrawCanvas);
   fillPicker = fillControl.picker;
 
-  // Default outline color #feffff
   const outlineControl = addColorControl(styleSec, "Outline", "#feffff", redrawCanvas);
   outlinePicker = outlineControl.picker;
 
   styleSec.child(createSpan("Outline thickness (0 - 40 px)"));
-  outlineWidthSlider = createSlider(0, 40, 40, 1); // default 40px
+  outlineWidthSlider = createSlider(0, 40, 40, 1);
   outlineWidthSlider.parent(styleSec);
   outlineWidthSlider.input(redrawCanvas);
 
@@ -376,7 +374,6 @@ function setup() {
   bgModeSelect.selected("solid");
   bgModeSelect.changed(redrawCanvas);
 
-  // Default background color #00f900
   const bg1Control = addColorControl(bgSec, "Color 1", "#00f900", redrawCanvas);
   bgColor1Picker = bg1Control.picker;
 
@@ -413,7 +410,7 @@ function setup() {
   alternateSideSpeedSlider.parent(animSec);
   alternateSideSpeedSlider.input(redrawCanvas);
 
-  rotateSidesCheckbox = createCheckbox("Rotate sides (L -> T -> R -> B)", false);
+  rotateSidesCheckbox = createCheckbox("Rotate sides (L → T → R → L)", false);
   rotateSidesCheckbox.parent(animSec);
   rotateSidesCheckbox.changed(handleAnimationState);
 
@@ -466,7 +463,6 @@ function systemFont() {
   return "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
 }
 
-// color picker + hex text input
 function addColorControl(parent, labelText, defaultColor, onChange) {
   const row = createDiv();
   row.parent(parent);
@@ -530,7 +526,7 @@ function handleAnimationState() {
 }
 
 function windowResized() {
-  // format is manual
+  // manual format
 }
 
 function redrawCanvas() {
@@ -560,7 +556,6 @@ function handleAudioFile(file) {
   if (audio) {
     audio.stop();
   }
-  // load from uploaded file
   audio = loadSound(file.data, () => {
     if (!amplitudeAnalyzer) {
       amplitudeAnalyzer = new p5.Amplitude();
@@ -658,7 +653,7 @@ function tracePathOnContext(ctx, path) {
 }
 
 // ----------------------------------------------------------
-// DRAW ONE HYBRID GLYPH (outer-only outline) with side modes
+// DRAW ONE HYBRID GLYPH
 // ----------------------------------------------------------
 function drawSplitGlyph(
   ch,
@@ -685,7 +680,9 @@ function drawSplitGlyph(
   const offA = (offsetASlider.value() / 100) * baseSize;
   const offB = (offsetBSlider.value() / 100) * baseSize;
 
-  const bbox = unionBBoxPx(gA, gB, xBase, yBase, sizeA, sizeB, offA, offB);
+  const x0 = xBase;
+
+  const bbox = unionBBoxPx(gA, gB, x0, yBase, sizeA, sizeB, offA, offB);
   const { xMin, xMax, yMin, yMax } = bbox;
   const w = xMax - xMin;
   const h = yMax - yMin;
@@ -696,11 +693,10 @@ function drawSplitGlyph(
 
   const ctx = drawingContext;
 
-  const pathA = gA.getPath(xBase + offA, yBase, sizeA);
-  const pathB = gB.getPath(xBase + offB, yBase, sizeB);
+  const pathA = gA.getPath(x0 + offA, yBase, sizeA);
+  const pathB = gB.getPath(x0 + offB, yBase, sizeB);
 
   function drawHalf(path, rx, ry, rw, rh) {
-    // stroke
     if (outlineWidth > 0) {
       ctx.save();
       ctx.beginPath();
@@ -722,7 +718,6 @@ function drawSplitGlyph(
       ctx.restore();
     }
 
-    // fill on top
     ctx.save();
     ctx.beginPath();
     ctx.rect(rx, ry, rw, rh);
@@ -737,35 +732,26 @@ function drawSplitGlyph(
   }
 
   // Decide effective mode and which side gets A or B
-  let effMode = mode; // "vertical" or "horizontal"
+  let effMode = mode;
   let aOnLeft = true;
   let aOnTop = true;
 
   if (rotateActive) {
-    // sideMode cycle driven by animation / beat:
-    // 0 = A left / B right
-    // 1 = A top  / B bottom
-    // 2 = A right / B left
-    // 3 = A left / B right again (no bottom state)
+    // 0 = A left, 1 = A top, 2 = A right, 3 = A left again
     const sm = sideMode % 4;
-
     if (sm === 0) {
-      // LEFT
       effMode = "vertical";
       aOnLeft = true;
-      aOnTop = true; // irrelevant vertically
+      aOnTop = true;
     } else if (sm === 1) {
-      // TOP
       effMode = "horizontal";
       aOnTop = true;
-      aOnLeft = true; // irrelevant horizontally
+      aOnLeft = true;
     } else if (sm === 2) {
-      // RIGHT
       effMode = "vertical";
       aOnLeft = false;
       aOnTop = true;
     } else {
-      // back to LEFT
       effMode = "vertical";
       aOnLeft = true;
       aOnTop = true;
@@ -862,7 +848,7 @@ function drawBackground() {
 }
 
 // ----------------------------------------------------------
-// LINE SHAPING FOR HORIZONTAL TEXT (ALIGNMENT)
+// LINE SHAPING FOR HORIZONTAL TEXT
 // ----------------------------------------------------------
 function shapeLinesHorizontal(txt, baseSize, tracking, margin) {
   const lines = [];
@@ -953,7 +939,7 @@ function draw() {
   const alignMode = alignSelect.value();
   const lineH = lineHeightSlider.value();
 
-  // ----------------- AUDIO BEAT LOGIC -----------------
+  // AUDIO BEAT LOGIC (tempo-ish)
   let beatMode =
     audioBeatCheckbox &&
     audioBeatCheckbox.checked() &&
@@ -963,17 +949,36 @@ function draw() {
   if (beatMode) {
     audioLevel = amplitudeAnalyzer.getLevel();
     const sens = audioSensitivitySlider.value(); // 0..1
-    const threshold = 0.02 + (1 - sens) * 0.2; // more sensitivity -> lower threshold
 
-    if (audioLevel > threshold && lastAudioLevel <= threshold) {
-      // simple beat trigger
+    // Rolling average of loudness
+    if (avgLevel === 0) {
+      avgLevel = audioLevel;
+    } else {
+      const smoothing = 0.05 + sens * 0.1; // faster smoothing at higher sens
+      avgLevel = lerp(avgLevel, audioLevel, smoothing);
+    }
+
+    // Margin above average: smaller margin -> more beats
+    const margin = 0.03 + (1 - sens) * 0.12;
+    const beatThreshold = avgLevel + margin;
+
+    const now = millis();
+    const minBeatInterval = 150 + (1 - sens) * 350; // ms
+
+    if (
+      audioLevel > beatThreshold &&
+      audioLevel > 0.02 &&
+      audioLevel > lastAudioLevel &&
+      now - lastBeatTime > minBeatInterval
+    ) {
       swapSidesBeat = !swapSidesBeat;
       sideModeBeat = (sideModeBeat + 1) % 4;
+      lastBeatTime = now;
     }
     lastAudioLevel = audioLevel;
   }
 
-  // ----------------- CUT ANIMATION -----------------
+  // CUT ANIMATION
   let baseCut = cutSlider.value() / 100;
   let cutRatio = baseCut;
 
@@ -983,17 +988,10 @@ function draw() {
     const delta = Math.sin(t) * amp;
     cutRatio = constrain(baseCut + delta, 0.0, 1.0);
   } else if (beatMode) {
-    const sens = audioSensitivitySlider.value();
-    const maxBeatJitter = 0.4; // how far cut can move
-    const beatAmount = constrain(audioLevel * (0.5 + sens), 0, 1);
-    cutRatio = constrain(
-      baseCut + (beatAmount - 0.3) * maxBeatJitter,
-      0.0,
-      1.0
-    );
+    cutRatio = baseCut; // fixed cut when driven by music
   }
 
-  // ----------------- SIDE / ROTATION ANIMATION -----------------
+  // SIDE / ROTATION ANIMATION
   let swapSidesGlobal = false;
   if (!beatMode && alternateSideCheckbox && alternateSideCheckbox.checked()) {
     const t2 = millis() * 0.001 * alternateSideSpeedSlider.value();
@@ -1009,7 +1007,6 @@ function draw() {
   }
 
   if (beatMode) {
-    // Beat drives side & rotation
     swapSidesGlobal = swapSidesBeat;
     rotateActive = true;
     sideModeGlobal = sideModeBeat;
@@ -1136,5 +1133,5 @@ function draw() {
     }
   }
 
-  pop(); // zoom transform
+  pop();
 }
