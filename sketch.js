@@ -17,6 +17,7 @@
 //        inversion only affects video, not background color
 // PNG EXPORT: single frame + image sequence start/stop (REC/STOP style)
 //             "folder / prefix" is only part of filename (browser chooses folder)
+// VIDEO EXPORT: WebM + audio via MediaRecorder (Start/Stop buttons)
 // ----------------------------------------------------------
 
 // opentype + p5.sound must be loaded in index.html
@@ -90,6 +91,13 @@ let exportSequence = false;
 let sequencePrefixInput;
 let sequenceCurrentFrame = 0;
 
+// VIDEO recording (WebM + audio)
+let mainCanvas = null;
+let canvasStream = null;
+let mediaRecorder = null;
+let recordedChunks = [];
+let isRecordingVideo = false;
+
 // ----------------------------------------------------------
 // PRELOAD
 // ----------------------------------------------------------
@@ -146,7 +154,13 @@ function setup() {
 
   const cnv = createCanvas(posterWidth, posterHeight);
   cnv.parent(canvasHolder);
+  mainCanvas = cnv;
   noLoop();
+
+  // prepare canvas stream for video recording
+  if (mainCanvas && mainCanvas.elt && mainCanvas.elt.captureStream) {
+    canvasStream = mainCanvas.elt.captureStream(30); // 30 fps
+  }
 
   function section(title) {
     const s = createDiv();
@@ -529,6 +543,21 @@ function setup() {
   const stopSeqBtn = createButton("Stop sequence");
   stopSeqBtn.parent(seqButtonsRow);
   stopSeqBtn.mousePressed(stopSequenceExport);
+
+  // VIDEO RECORD BUTTONS
+  const videoRow = createDiv();
+  videoRow.parent(exportSec);
+  videoRow.style("display", "flex");
+  videoRow.style("gap", "6px");
+  videoRow.style("margin-top", "8px");
+
+  const startVidBtn = createButton("Start video (webm+audio)");
+  startVidBtn.parent(videoRow);
+  startVidBtn.mousePressed(startVideoRecording);
+
+  const stopVidBtn = createButton("Stop video");
+  stopVidBtn.parent(videoRow);
+  stopVidBtn.mousePressed(stopVideoRecording);
 
   handleAnimationState();
 }
@@ -1297,12 +1326,90 @@ function saveSequenceFrame() {
   const prefixRaw = sequencePrefixInput ? sequencePrefixInput.value() : "seq_";
   const prefixClean = prefixRaw && prefixRaw.length > 0 ? prefixRaw : "seq_";
 
-  // sanitize: remove characters that are invalid in filenames on most OS
   const safePrefix = prefixClean.replace(/[\\/:*?"<>|]/g, "_");
 
   const idxStr = nf(sequenceCurrentFrame, 4); // 0000, 0001, ...
   saveCanvas(safePrefix + idxStr, "png");
   sequenceCurrentFrame++;
+}
+
+// ----------------------------------------------------------
+// VIDEO RECORDING (WEBM + AUDIO)
+// ----------------------------------------------------------
+function startVideoRecording() {
+  if (isRecordingVideo) return;
+  if (!window.MediaRecorder) {
+    console.warn("MediaRecorder not supported in this browser.");
+    return;
+  }
+  if (!canvasStream && mainCanvas && mainCanvas.elt && mainCanvas.elt.captureStream) {
+    canvasStream = mainCanvas.elt.captureStream(30);
+  }
+  if (!canvasStream) {
+    console.warn("Canvas captureStream not available.");
+    return;
+  }
+
+  let finalStream = canvasStream;
+
+  try {
+    if (audio) {
+      const audioCtx = getAudioContext();
+      const dest = audioCtx.createMediaStreamDestination();
+      audio.connect(dest);
+
+      finalStream = new MediaStream([
+        ...canvasStream.getVideoTracks(),
+        ...dest.stream.getAudioTracks()
+      ]);
+    }
+  } catch (e) {
+    console.warn("Could not attach audio to MediaStream:", e);
+  }
+
+  let mimeType = "video/webm;codecs=vp9,opus";
+  if (!MediaRecorder.isTypeSupported(mimeType)) {
+    mimeType = "video/webm";
+  }
+
+  try {
+    mediaRecorder = new MediaRecorder(finalStream, { mimeType });
+  } catch (e) {
+    console.error("Error creating MediaRecorder:", e);
+    return;
+  }
+
+  recordedChunks = [];
+  mediaRecorder.ondataavailable = ev => {
+    if (ev.data && ev.data.size > 0) {
+      recordedChunks.push(ev.data);
+    }
+  };
+
+  mediaRecorder.onstop = () => {
+    const blob = new Blob(recordedChunks, { type: "video/webm" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.style.display = "none";
+    a.href = url;
+    a.download = "hybrid_poster_video.webm"; // convert to mp4 later if needed
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    isRecordingVideo = false;
+  };
+
+  mediaRecorder.start();
+  isRecordingVideo = true;
+  console.log("Video recording started.");
+}
+
+function stopVideoRecording() {
+  if (mediaRecorder && isRecordingVideo) {
+    mediaRecorder.stop();
+    console.log("Video recording stopped.");
+  }
 }
 
 // ----------------------------------------------------------
