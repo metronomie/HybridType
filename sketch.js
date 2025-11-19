@@ -94,7 +94,7 @@ function preload() {
 // ----------------------------------------------------------
 function setup() {
   posterWidth = 1080;
-  posterHeight = 1920;
+  posterHeight = 1560;
 
   const main = createDiv();
   main.style("display", "flex");
