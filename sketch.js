@@ -10,8 +10,10 @@
 // Animation: side flip, rotation
 // Audio reactive: rotate sides from tempo-ish peaks
 // Orientation = page format ONLY (horizontal/vertical), NOT text direction
-// New: quarter split mode (A/B/A/B) with audio beat rotation only
-// New: per-line size / line-height / tracking overrides
+// Quarters split mode (A/B/A/B) with audio beat rotation only
+// Per-line size / line-height / tracking overrides
+// Background: solid, gradient, image, or VIDEO in random squares
+// Video: random squares + invert toggle, updated on every 2nd beat
 // ----------------------------------------------------------
 
 // opentype + p5.sound must be loaded in index.html
@@ -52,7 +54,10 @@ let zoomSlider;
 
 let bgModeSelect, bgColor1Picker, bgColor2Picker, bgImageInput;
 let bgImg = null;
+let bgVideo = null;
+let bgVideoInput = null;
 
+let animateCheckbox; // (unused but kept if referenced)
 let alternateSideCheckbox, alternateSideSpeedSlider;
 let rotateSidesCheckbox, rotateSidesSpeedSlider;
 
@@ -63,6 +68,12 @@ const DEFAULT_UI_GREEN = "#1f6a3a";
 // per-line settings
 let lineSettings = []; // [{sizeFactor, lineHeightFactor, trackingDelta}, ...]
 let lineSettingsContainer;
+
+// video tiles + beat-slowed motion
+let videoTiles = [];          // [{x,y,w,h}, ...]
+let videoBeatCounter = 0;     // counts detected beats
+let videoTileNeedsUpdate = false;
+let videoInvert = false;      // whether to invert video bg this "slow beat"
 
 // ----------------------------------------------------------
 // PRELOAD
@@ -115,8 +126,8 @@ function setup() {
   canvasHolder.style("align-items", "center");
   canvasHolder.style("justify-content", "center");
   canvasHolder.style("background", "#f5f5f5");
-  canvasHolder.style("overflow", "auto");     // scrollable poster side
-  canvasHolder.style("max-height", "100vh");  // limit to viewport height
+  canvasHolder.style("overflow", "auto");     // scroll poster
+  canvasHolder.style("max-height", "100vh");  // stay in viewport
 
   const cnv = createCanvas(posterWidth, posterHeight);
   cnv.parent(canvasHolder);
@@ -229,7 +240,7 @@ function setup() {
   fontBStatusP.style("margin", "2px 0 0 0");
 
   const hint = createP(
-    "Hybrid per glyph: left/top from A, right/bottom from B. Now also quarters (A/B/A/B) with audio beat rotation."
+    "Hybrid per glyph: left/top from A, right/bottom from B. Quarters = A/B/A/B, rotated by beat."
   );
   hint.parent(fontsSec);
   hint.style("margin", "6px 0 0 0");
@@ -389,6 +400,7 @@ function setup() {
   bgModeSelect.option("Solid color", "solid");
   bgModeSelect.option("Vertical gradient", "gradient");
   bgModeSelect.option("Image", "image");
+  bgModeSelect.option("Video", "video");
   bgModeSelect.selected("solid");
   bgModeSelect.changed(redrawCanvas);
 
@@ -402,7 +414,11 @@ function setup() {
   bgImageInput = createFileInput(handleBgImageFile);
   bgImageInput.parent(bgSec);
 
-  // ANIMATION (no more cut animation)
+  bgSec.child(createSpan("Background video"));
+  bgVideoInput = createFileInput(handleBgVideoFile);
+  bgVideoInput.parent(bgSec);
+
+  // ANIMATION (no cut animation)
   const animSec = section("Animation");
 
   alternateSideCheckbox = createCheckbox("Alternate font side (flip A/B)", false);
@@ -441,7 +457,7 @@ function setup() {
   audioPlayButton.parent(audioSec);
   audioPlayButton.mousePressed(toggleAudio);
 
-  audioBeatCheckbox = createCheckbox("Drive animation from audio beat (rotation only)", false);
+  audioBeatCheckbox = createCheckbox("Drive animation from audio beat (rotation + video)", false);
   audioBeatCheckbox.parent(audioSec);
   audioBeatCheckbox.changed(handleAnimationState);
 
@@ -667,7 +683,7 @@ function handleAudioFile(file) {
 }
 
 // ----------------------------------------------------------
-// FONT / BACKGROUND
+// FONT / BACKGROUND FILE HANDLERS
 // ----------------------------------------------------------
 function handleFontFile(file, which) {
   if (!file) return;
@@ -693,8 +709,32 @@ function handleBgImageFile(file) {
 
   loadImage(file.data, img => {
     bgImg = img;
+    bgVideo = null; // prefer image if both exist
     redrawCanvas();
   });
+}
+
+function handleBgVideoFile(file) {
+  if (!file) return;
+  if (!file.type.startsWith("video")) return;
+
+  if (bgVideo) {
+    bgVideo.remove();
+    bgVideo = null;
+  }
+
+  // createVideo from data URL
+  bgVideo = createVideo([file.data], () => {
+    bgVideo.loop();
+    bgVideo.volume(0);
+  });
+  bgVideo.hide();
+
+  videoTiles = [];
+  videoTileNeedsUpdate = true;
+  videoInvert = false;
+
+  redrawCanvas();
 }
 
 function glyphAdvance(glyph, font, sizePx) {
@@ -788,7 +828,6 @@ function drawSplitGlyph(
   const w = xMax - xMin;
   const h = yMax - yMin;
 
-  // generous padding so blur has room outside
   const pad = outlineWidth > 0 || blurAmount > 0
     ? outlineWidth * 2 + blurAmount * 4 + 8
     : 0;
@@ -804,14 +843,14 @@ function drawSplitGlyph(
     ctx.rect(rx, ry, rw, rh);
     ctx.clip();
 
-    // 1) Outer glow (if blur > 0)
+    // glow
     if (outlineWidth > 0 && blurAmount > 0) {
       ctx.lineWidth = outlineWidth;
       ctx.lineJoin = joinType;
       ctx.lineCap = joinType;
       ctx.strokeStyle = outlineColor;
 
-      ctx.shadowBlur = blurAmount * 4; // strong
+      ctx.shadowBlur = blurAmount * 4;
       ctx.shadowColor = outlineColor;
       ctx.shadowOffsetX = 0;
       ctx.shadowOffsetY = 0;
@@ -820,7 +859,7 @@ function drawSplitGlyph(
       ctx.stroke();
     }
 
-    // 2) Sharp outline (always when outlineWidth > 0)
+    // sharp outline
     if (outlineWidth > 0) {
       ctx.lineWidth = outlineWidth;
       ctx.lineJoin = joinType;
@@ -834,7 +873,7 @@ function drawSplitGlyph(
       ctx.stroke();
     }
 
-    // 3) Fill
+    // fill
     ctx.shadowBlur = 0;
     ctx.shadowColor = "rgba(0,0,0,0)";
     ctx.fillStyle = fillColor;
@@ -844,15 +883,14 @@ function drawSplitGlyph(
     ctx.restore();
   }
 
-  // quarter mode: A/B/A/B with audio-beat rotation only
+  // quarter mode: A/B/A/B with beat-driven rotation (clockwise)
   if (mode === "quarters") {
     const midX = (xMin + xMax) / 2;
     const midY = (yMin + yMax) / 2;
 
     const sm = rotateActive ? (sideMode % 4 + 4) % 4 : 0;
 
-    // quadrant index:
-    // 0 = TL, 1 = TR, 2 = BR, 3 = BL
+    // 0=TL,1=TR,2=BR,3=BL
     const quads = [
       { x: xMin - pad, y: yMin - pad, w: (midX - xMin) + pad, h: (midY - yMin) + pad },      // TL
       { x: midX,       y: yMin - pad, w: (xMax + pad) - midX, h: (midY - yMin) + pad },      // TR
@@ -861,14 +899,14 @@ function drawSplitGlyph(
     ];
 
     for (let q = 0; q < 4; q++) {
-      const useA = ((q + sm) % 2 === 0); // state0: TL=A,TR=B,BR=A,BL=B (A/B/A/B clockwise)
+      const useA = ((q + sm) % 2 === 0); // TL=A,TR=B,BR=A,BL=B, then rotated
       const quad = quads[q];
       drawHalf(useA ? pathA : pathB, quad.x, quad.y, quad.w, quad.h);
     }
     return;
   }
 
-  // which side gets which font, for vertical/horizontal
+  // vertical/horizontal split
   let effMode = mode;
   let aOnLeft = true;
   let aOnTop = true;
@@ -944,11 +982,51 @@ function drawSplitGlyph(
 }
 
 // ----------------------------------------------------------
-// BACKGROUND
+// BACKGROUND (including video tiles)
 // ----------------------------------------------------------
+function updateVideoTiles() {
+  if (!bgVideo) return;
+
+  videoTiles = [];
+  const tileCount = 6; // number of squares
+
+  const minSize = min(width, height) * 0.15;
+  const maxSize = min(width, height) * 0.35;
+
+  for (let i = 0; i < tileCount; i++) {
+    const s = random(minSize, maxSize);
+    const x = random(-s * 0.2, width - s * 0.8);
+    const y = random(-s * 0.2, height - s * 0.8);
+    videoTiles.push({ x, y, w: s, h: s });
+  }
+}
+
 function drawBackground() {
   const mode = bgModeSelect.value();
-  if (mode === "image" && bgImg) {
+
+  if (mode === "video" && bgVideo && bgVideo.width > 0 && bgVideo.height > 0) {
+    if (videoTiles.length === 0 || videoTileNeedsUpdate) {
+      updateVideoTiles();
+      videoTileNeedsUpdate = false;
+    }
+
+    push();
+    for (let i = 0; i < videoTiles.length; i++) {
+      const t = videoTiles[i];
+      image(bgVideo, t.x, t.y, t.w, t.h);
+    }
+    pop();
+
+    if (videoInvert) {
+      push();
+      blendMode(DIFFERENCE);
+      noStroke();
+      fill(255);
+      rect(0, 0, width, height);
+      pop();
+    }
+
+  } else if (mode === "image" && bgImg) {
     const canvasRatio = width / height;
     const imgRatio = bgImg.width / bgImg.height;
 
@@ -966,6 +1044,7 @@ function drawBackground() {
     push();
     image(bgImg, dx, dy, drawW, drawH);
     pop();
+
   } else if (mode === "gradient") {
     const c1 = color(bgColor1Picker.value());
     const c2 = color(bgColor2Picker.value());
@@ -996,9 +1075,9 @@ function shapeLinesHorizontal(txt, baseSize, baseTracking, margin) {
     const lineText = rawLines[i];
     const ls = lineSettings[i];
 
-    const sizeLine = baseSize * ls.sizeFactor;           // default = 1
-    const trackingLine = baseTracking + ls.trackingDelta; // default = 0
-    const lhFactor = ls.lineHeightFactor;                // default = 1
+    const sizeLine = baseSize * ls.sizeFactor;
+    const trackingLine = baseTracking + ls.trackingDelta;
+    const lhFactor = ls.lineHeightFactor;
 
     let w = 0;
 
@@ -1036,7 +1115,6 @@ function draw() {
   const cy = posterHeight / 2;
 
   push();
-  // keep zoom centered on the poster
   translate(width / 2, height / 2);
   scale(z);
   translate(-cx, -cy);
@@ -1060,7 +1138,7 @@ function draw() {
   const alignMode = alignSelect.value();
   const globalLineH = lineHeightSlider.value();
 
-  // AUDIO / BEAT (rotation only — no cut animation)
+  // AUDIO / BEAT (rotation + video tiles every 2nd beat)
   let beatMode =
     audioBeatCheckbox &&
     audioBeatCheckbox.checked() &&
@@ -1090,21 +1168,26 @@ function draw() {
       audioLevel > lastAudioLevel &&
       now - lastBeatTime > minBeatInterval
     ) {
-      // audio beat: toggle side flip + advance rotation index
+      // primary beat for typography
       swapSidesBeat = !swapSidesBeat;
       sideModeBeat = (sideModeBeat + 1) % 4;
       lastBeatTime = now;
+
+      // slower pattern for video: every 2nd beat
+      videoBeatCounter++;
+      if (videoBeatCounter % 2 === 0) {
+        videoTileNeedsUpdate = true;
+        videoInvert = !videoInvert;
+      }
     }
     lastAudioLevel = audioLevel;
   }
 
   const mode = axisModeSelect.value();
 
-  // cut ratio always manual now; no animation
   const baseCut = cutSlider.value() / 100;
   let cutRatio = baseCut;
 
-  // cut label text depending on mode
   if (mode === "vertical") {
     cutLabel.html("Cut position (0 = left, 100 = right)");
   } else if (mode === "horizontal") {
@@ -1125,7 +1208,6 @@ function draw() {
 
   const margin = baseSize * 0.4;
 
-  // side flip + rotation
   let swapSidesGlobal = false;
   let rotateActive = false;
   let sideModeGlobal = 0;
@@ -1136,20 +1218,17 @@ function draw() {
   }
 
   if (!beatMode && rotateSidesCheckbox && rotateSidesCheckbox.checked()) {
-    rotateActive = (mode !== "quarters"); // quarters: beat-only rotation
+    rotateActive = (mode !== "quarters");
     const t3 = millis() * 0.001 * rotateSidesSpeedSlider.value();
     sideModeGlobal = Math.floor(t3) % 4;
   }
 
   if (beatMode) {
     swapSidesGlobal = swapSidesBeat;
-    // for vertical/horizontal OR when rotateSidesCheckbox is on
-    // we still rotate; for quarters, rotation is beat-only
     rotateActive = true;
     sideModeGlobal = sideModeBeat;
   }
 
-  // ALWAYS HORIZONTAL TEXT
   const shaped = shapeLinesHorizontal(txt, baseSize, baseTracking, margin);
   let y = baseSize * 1.2;
 
@@ -1176,11 +1255,8 @@ function draw() {
       const gB = otFontB.charToGlyph(ch);
       if (!gA || !gB) continue;
 
-      // for quarters: rotation only from beat; ignore swapSides for mapping,
-      // but we still pass swapSidesGlobal (it is ignored in quarters branch).
       const rotateForThisGlyph =
         (mode === "quarters" ? beatMode : rotateActive);
-
       const sideModeForThisGlyph =
         (mode === "quarters" ? sideModeBeat : sideModeGlobal);
 
