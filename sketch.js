@@ -13,7 +13,8 @@
 // Quarters split mode (A/B/A/B) with audio beat rotation only
 // Per-line size / line-height / tracking overrides
 // Background: solid, gradient, image, or VIDEO in random squares
-// Video: random squares + invert toggle, updated on every 2nd beat
+// Video: 2 videos, alternating on parametric beat frequency
+//        random tiles OR mosaic (video scaled to poster and sliced)
 // ----------------------------------------------------------
 
 // opentype + p5.sound must be loaded in index.html
@@ -54,10 +55,17 @@ let zoomSlider;
 
 let bgModeSelect, bgColor1Picker, bgColor2Picker, bgImageInput;
 let bgImg = null;
-let bgVideo = null;
-let bgVideoInput = null;
 
-let animateCheckbox; // (unused but kept if referenced)
+// VIDEO
+let bgVideo1 = null;
+let bgVideo2 = null;
+let bgVideoInput1 = null;
+let bgVideoInput2 = null;
+let videoTileModeSelect = null;      // "random" or "mosaic"
+let videoAltBeatsSlider = null;      // beat frequency for alternation
+let activeVideoIndex = 0;            // 0 = video1, 1 = video2
+
+let animateCheckbox; // kept for consistency, not used for cut
 let alternateSideCheckbox, alternateSideSpeedSlider;
 let rotateSidesCheckbox, rotateSidesSpeedSlider;
 
@@ -94,7 +102,7 @@ function preload() {
 // ----------------------------------------------------------
 function setup() {
   posterWidth = 1080;
-  posterHeight = 1560;
+  posterHeight = 1920;
 
   const main = createDiv();
   main.style("display", "flex");
@@ -414,9 +422,32 @@ function setup() {
   bgImageInput = createFileInput(handleBgImageFile);
   bgImageInput.parent(bgSec);
 
-  bgSec.child(createSpan("Background video"));
-  bgVideoInput = createFileInput(handleBgVideoFile);
-  bgVideoInput.parent(bgSec);
+  bgSec.child(createSpan("Background video 1"));
+  bgVideoInput1 = createFileInput(file => handleBgVideoFile(file, 1));
+  bgVideoInput1.parent(bgSec);
+
+  bgSec.child(createSpan("Background video 2"));
+  bgVideoInput2 = createFileInput(file => handleBgVideoFile(file, 2));
+  bgVideoInput2.parent(bgSec);
+
+  const tileModeRow = createDiv();
+  tileModeRow.parent(bgSec);
+  tileModeRow.style("display", "flex");
+  tileModeRow.style("gap", "6px");
+  tileModeRow.style("align-items", "center");
+  tileModeRow.child(createSpan("Video tile mode"));
+
+  videoTileModeSelect = createSelect();
+  videoTileModeSelect.parent(tileModeRow);
+  videoTileModeSelect.option("Random tiles", "random");
+  videoTileModeSelect.option("Mosaic", "mosaic");
+  videoTileModeSelect.selected("random");
+  videoTileModeSelect.changed(redrawCanvas);
+
+  bgSec.child(createSpan("Video alternation (beats)"));
+  videoAltBeatsSlider = createSlider(1, 16, 4, 1);
+  videoAltBeatsSlider.parent(bgSec);
+  videoAltBeatsSlider.input(redrawCanvas);
 
   // ANIMATION (no cut animation)
   const animSec = section("Animation");
@@ -709,30 +740,41 @@ function handleBgImageFile(file) {
 
   loadImage(file.data, img => {
     bgImg = img;
-    bgVideo = null; // prefer image if both exist
     redrawCanvas();
   });
 }
 
-function handleBgVideoFile(file) {
+function handleBgVideoFile(file, index) {
   if (!file) return;
   if (!file.type.startsWith("video")) return;
 
-  if (bgVideo) {
-    bgVideo.remove();
-    bgVideo = null;
+  if (index === 1) {
+    if (bgVideo1) {
+      bgVideo1.remove();
+      bgVideo1 = null;
+    }
+    bgVideo1 = createVideo([file.data], () => {
+      bgVideo1.loop();
+      bgVideo1.volume(0);
+    });
+    bgVideo1.hide();
+  } else {
+    if (bgVideo2) {
+      bgVideo2.remove();
+      bgVideo2 = null;
+    }
+    bgVideo2 = createVideo([file.data], () => {
+      bgVideo2.loop();
+      bgVideo2.volume(0);
+    });
+    bgVideo2.hide();
   }
-
-  // createVideo from data URL
-  bgVideo = createVideo([file.data], () => {
-    bgVideo.loop();
-    bgVideo.volume(0);
-  });
-  bgVideo.hide();
 
   videoTiles = [];
   videoTileNeedsUpdate = true;
   videoInvert = false;
+  videoBeatCounter = 0;
+  activeVideoIndex = 0;
 
   redrawCanvas();
 }
@@ -843,7 +885,6 @@ function drawSplitGlyph(
     ctx.rect(rx, ry, rw, rh);
     ctx.clip();
 
-    // glow
     if (outlineWidth > 0 && blurAmount > 0) {
       ctx.lineWidth = outlineWidth;
       ctx.lineJoin = joinType;
@@ -859,7 +900,6 @@ function drawSplitGlyph(
       ctx.stroke();
     }
 
-    // sharp outline
     if (outlineWidth > 0) {
       ctx.lineWidth = outlineWidth;
       ctx.lineJoin = joinType;
@@ -873,7 +913,6 @@ function drawSplitGlyph(
       ctx.stroke();
     }
 
-    // fill
     ctx.shadowBlur = 0;
     ctx.shadowColor = "rgba(0,0,0,0)";
     ctx.fillStyle = fillColor;
@@ -883,14 +922,12 @@ function drawSplitGlyph(
     ctx.restore();
   }
 
-  // quarter mode: A/B/A/B with beat-driven rotation (clockwise)
   if (mode === "quarters") {
     const midX = (xMin + xMax) / 2;
     const midY = (yMin + yMax) / 2;
 
     const sm = rotateActive ? (sideMode % 4 + 4) % 4 : 0;
 
-    // 0=TL,1=TR,2=BR,3=BL
     const quads = [
       { x: xMin - pad, y: yMin - pad, w: (midX - xMin) + pad, h: (midY - yMin) + pad },      // TL
       { x: midX,       y: yMin - pad, w: (xMax + pad) - midX, h: (midY - yMin) + pad },      // TR
@@ -899,14 +936,13 @@ function drawSplitGlyph(
     ];
 
     for (let q = 0; q < 4; q++) {
-      const useA = ((q + sm) % 2 === 0); // TL=A,TR=B,BR=A,BL=B, then rotated
+      const useA = ((q + sm) % 2 === 0);
       const quad = quads[q];
       drawHalf(useA ? pathA : pathB, quad.x, quad.y, quad.w, quad.h);
     }
     return;
   }
 
-  // vertical/horizontal split
   let effMode = mode;
   let aOnLeft = true;
   let aOnTop = true;
@@ -985,10 +1021,8 @@ function drawSplitGlyph(
 // BACKGROUND (including video tiles)
 // ----------------------------------------------------------
 function updateVideoTiles() {
-  if (!bgVideo) return;
-
   videoTiles = [];
-  const tileCount = 6; // number of squares
+  const tileCount = 6;
 
   const minSize = min(width, height) * 0.15;
   const maxSize = min(width, height) * 0.35;
@@ -1004,26 +1038,77 @@ function updateVideoTiles() {
 function drawBackground() {
   const mode = bgModeSelect.value();
 
-  if (mode === "video" && bgVideo && bgVideo.width > 0 && bgVideo.height > 0) {
-    if (videoTiles.length === 0 || videoTileNeedsUpdate) {
-      updateVideoTiles();
-      videoTileNeedsUpdate = false;
+  if (mode === "video") {
+    // colored background behind video (Color 1)
+    noStroke();
+    fill(bgColor1Picker.value());
+    rect(0, 0, width, height);
+
+    let currentVideo = null;
+    if (bgVideo1 && bgVideo2) {
+      currentVideo = activeVideoIndex === 0 ? bgVideo1 : bgVideo2;
+    } else if (bgVideo1) {
+      currentVideo = bgVideo1;
+    } else if (bgVideo2) {
+      currentVideo = bgVideo2;
     }
 
-    push();
-    for (let i = 0; i < videoTiles.length; i++) {
-      const t = videoTiles[i];
-      image(bgVideo, t.x, t.y, t.w, t.h);
-    }
-    pop();
+    if (currentVideo && currentVideo.width > 0 && currentVideo.height > 0) {
+      if (videoTiles.length === 0 || videoTileNeedsUpdate) {
+        updateVideoTiles();
+        videoTileNeedsUpdate = false;
+      }
 
-    if (videoInvert) {
+      const tileMode = videoTileModeSelect ? videoTileModeSelect.value() : "random";
+
+      const vW = currentVideo.width;
+      const vH = currentVideo.height;
+
+      let drawW, drawH, dx, dy, scaleV;
+      if (tileMode === "mosaic") {
+        const canvasRatio = width / height;
+        const vidRatio = vW / vH;
+        if (vidRatio > canvasRatio) {
+          drawH = height;
+          drawW = vidRatio * drawH;
+        } else {
+          drawW = width;
+          drawH = drawW / vidRatio;
+        }
+        dx = (width - drawW) / 2;
+        dy = (height - drawH) / 2;
+        scaleV = drawW / vW;
+      }
+
       push();
-      blendMode(DIFFERENCE);
-      noStroke();
-      fill(255);
-      rect(0, 0, width, height);
+      for (let i = 0; i < videoTiles.length; i++) {
+        const t = videoTiles[i];
+
+        if (tileMode === "mosaic") {
+          const sx = (t.x - dx) / scaleV;
+          const sy = (t.y - dy) / scaleV;
+          const sw = t.w / scaleV;
+          const sh = t.h / scaleV;
+
+          image(
+            currentVideo,
+            t.x, t.y, t.w, t.h,
+            sx, sy, sw, sh
+          );
+        } else {
+          image(currentVideo, t.x, t.y, t.w, t.h);
+        }
+      }
       pop();
+
+      if (videoInvert) {
+        push();
+        blendMode(DIFFERENCE);
+        noStroke();
+        fill(255);
+        rect(0, 0, width, height);
+        pop();
+      }
     }
 
   } else if (mode === "image" && bgImg) {
@@ -1138,7 +1223,6 @@ function draw() {
   const alignMode = alignSelect.value();
   const globalLineH = lineHeightSlider.value();
 
-  // AUDIO / BEAT (rotation + video tiles every 2nd beat)
   let beatMode =
     audioBeatCheckbox &&
     audioBeatCheckbox.checked() &&
@@ -1168,16 +1252,18 @@ function draw() {
       audioLevel > lastAudioLevel &&
       now - lastBeatTime > minBeatInterval
     ) {
-      // primary beat for typography
       swapSidesBeat = !swapSidesBeat;
       sideModeBeat = (sideModeBeat + 1) % 4;
       lastBeatTime = now;
 
-      // slower pattern for video: every 2nd beat
       videoBeatCounter++;
-      if (videoBeatCounter % 2 === 0) {
+      const altBeats = videoAltBeatsSlider ? max(1, int(videoAltBeatsSlider.value())) : 2;
+      if (videoBeatCounter % altBeats === 0) {
         videoTileNeedsUpdate = true;
         videoInvert = !videoInvert;
+        if (bgVideo1 && bgVideo2) {
+          activeVideoIndex = 1 - activeVideoIndex;
+        }
       }
     }
     lastAudioLevel = audioLevel;
