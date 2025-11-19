@@ -7,9 +7,11 @@
 // Zoom, split, outline
 // Font A/B hybrid, transforms
 // Layout, negative line height (horizontal text)
-// Animation: cut LFO, side flip, rotation
+// Animation: side flip, rotation
 // Audio reactive: rotate sides from tempo-ish peaks
 // Orientation = page format ONLY (horizontal/vertical), NOT text direction
+// New: quarter split mode (A/B/A/B) with audio beat rotation only
+// New: per-line size / line-height / tracking overrides
 // ----------------------------------------------------------
 
 // opentype + p5.sound must be loaded in index.html
@@ -51,13 +53,16 @@ let zoomSlider;
 let bgModeSelect, bgColor1Picker, bgColor2Picker, bgImageInput;
 let bgImg = null;
 
-let animateCheckbox, animSpeedSlider, animAmplitudeSlider;
 let alternateSideCheckbox, alternateSideSpeedSlider;
 let rotateSidesCheckbox, rotateSidesSpeedSlider;
 
 let posterWidth, posterHeight;
 
 const DEFAULT_UI_GREEN = "#1f6a3a";
+
+// per-line settings
+let lineSettings = []; // [{sizeFactor, lineHeightFactor, trackingDelta}, ...]
+let lineSettingsContainer;
 
 // ----------------------------------------------------------
 // PRELOAD
@@ -110,6 +115,8 @@ function setup() {
   canvasHolder.style("align-items", "center");
   canvasHolder.style("justify-content", "center");
   canvasHolder.style("background", "#f5f5f5");
+  canvasHolder.style("overflow", "auto");     // scrollable poster side
+  canvasHolder.style("max-height", "100vh");  // limit to viewport height
 
   const cnv = createCanvas(posterWidth, posterHeight);
   cnv.parent(canvasHolder);
@@ -222,7 +229,7 @@ function setup() {
   fontBStatusP.style("margin", "2px 0 0 0");
 
   const hint = createP(
-    "Hybrid per glyph: left or top from A, right or bottom from B. Combine with layout, background, animation."
+    "Hybrid per glyph: left/top from A, right/bottom from B. Now also quarters (A/B/A/B) with audio beat rotation."
   );
   hint.parent(fontsSec);
   hint.style("margin", "6px 0 0 0");
@@ -266,17 +273,34 @@ function setup() {
   textInput.style("border", "1px solid " + DEFAULT_UI_GREEN);
   textInput.style("resize", "vertical");
   textInput.value("ALL\nCAPS\n1312");
-  textInput.input(redrawCanvas);
+  textInput.input(() => {
+    updateLineSettingsUI();
+    redrawCanvas();
+  });
 
   textSec.child(createSpan("Base font size"));
   sizeSlider = createSlider(32, 400, 200, 1);
   sizeSlider.parent(textSec);
   sizeSlider.input(redrawCanvas);
 
-  textSec.child(createSpan("Tracking (letter spacing)"));
+  textSec.child(createSpan("Base tracking (letter spacing)"));
   trackingSlider = createSlider(-40, 120, 10, 1);
   trackingSlider.parent(textSec);
   trackingSlider.input(redrawCanvas);
+
+  const perLineLabel = createSpan("Per-line overrides: size %, line-height %, Δtracking");
+  perLineLabel.parent(textSec);
+  perLineLabel.style("margin-top", "4px");
+  perLineLabel.style("font-size", "11px");
+
+  lineSettingsContainer = createDiv();
+  lineSettingsContainer.parent(textSec);
+  lineSettingsContainer.style("display", "flex");
+  lineSettingsContainer.style("flex-direction", "column");
+  lineSettingsContainer.style("gap", "2px");
+  lineSettingsContainer.style("border", "1px dashed #cccccc");
+  lineSettingsContainer.style("padding", "4px");
+  updateLineSettingsUI();
 
   // SPLIT
   const splitSec = section("Split inside glyph");
@@ -292,6 +316,7 @@ function setup() {
   axisModeSelect.parent(modeRow);
   axisModeSelect.option("Vertical (left/right)", "vertical");
   axisModeSelect.option("Horizontal (top/bottom)", "horizontal");
+  axisModeSelect.option("Quarters (A/B/A/B)", "quarters");
   axisModeSelect.selected("vertical");
   axisModeSelect.changed(redrawCanvas);
 
@@ -377,22 +402,8 @@ function setup() {
   bgImageInput = createFileInput(handleBgImageFile);
   bgImageInput.parent(bgSec);
 
-  // ANIMATION
+  // ANIMATION (no more cut animation)
   const animSec = section("Animation");
-
-  animateCheckbox = createCheckbox("Animate cut", false);
-  animateCheckbox.parent(animSec);
-  animateCheckbox.changed(handleAnimationState);
-
-  animSec.child(createSpan("Cut speed"));
-  animSpeedSlider = createSlider(0.1, 3.0, 1.0, 0.05);
-  animSpeedSlider.parent(animSec);
-  animSpeedSlider.input(redrawCanvas);
-
-  animSec.child(createSpan("Cut amplitude (0 - 0.5)"));
-  animAmplitudeSlider = createSlider(0.0, 0.5, 0.15, 0.01);
-  animAmplitudeSlider.parent(animSec);
-  animAmplitudeSlider.input(redrawCanvas);
 
   alternateSideCheckbox = createCheckbox("Alternate font side (flip A/B)", false);
   alternateSideCheckbox.parent(animSec);
@@ -430,7 +441,7 @@ function setup() {
   audioPlayButton.parent(audioSec);
   audioPlayButton.mousePressed(toggleAudio);
 
-  audioBeatCheckbox = createCheckbox("Drive animation from audio beat", false);
+  audioBeatCheckbox = createCheckbox("Drive animation from audio beat (rotation only)", false);
   audioBeatCheckbox.parent(audioSec);
   audioBeatCheckbox.changed(handleAnimationState);
 
@@ -446,6 +457,87 @@ function setup() {
   savePngBtn.mousePressed(() => saveCanvas("hybrid_poster", "png"));
 
   handleAnimationState();
+}
+
+// ----------------------------------------------------------
+// PER-LINE SETTINGS
+// ----------------------------------------------------------
+function ensureLineSettings(n) {
+  while (lineSettings.length < n) {
+    lineSettings.push({
+      sizeFactor: 1.0,
+      lineHeightFactor: 1.0,
+      trackingDelta: 0
+    });
+  }
+  if (lineSettings.length > n) {
+    lineSettings.length = n;
+  }
+}
+
+function updateLineSettingsUI() {
+  if (!textInput || !lineSettingsContainer) return;
+  const lines = textInput.value().split("\n");
+  ensureLineSettings(lines.length);
+
+  lineSettingsContainer.html("");
+
+  for (let i = 0; i < lines.length; i++) {
+    const row = createDiv();
+    row.parent(lineSettingsContainer);
+    row.style("display", "flex");
+    row.style("gap", "4px");
+    row.style("align-items", "center");
+
+    const label = createSpan("L" + (i + 1));
+    label.parent(row);
+    label.style("width", "22px");
+
+    const sizeInput = createInput((lineSettings[i].sizeFactor * 100).toFixed(0));
+    sizeInput.parent(row);
+    sizeInput.attribute("type", "number");
+    sizeInput.style("width", "45px");
+    const sizeLabel = createSpan("%");
+    sizeLabel.parent(row);
+
+    const lhInput = createInput((lineSettings[i].lineHeightFactor * 100).toFixed(0));
+    lhInput.parent(row);
+    lhInput.attribute("type", "number");
+    lhInput.style("width", "45px");
+    const lhLabel = createSpan("% LH");
+    lhLabel.parent(row);
+
+    const trackInput = createInput(lineSettings[i].trackingDelta.toFixed(0));
+    trackInput.parent(row);
+    trackInput.attribute("type", "number");
+    trackInput.style("width", "55px");
+    const trackLabel = createSpan("Δtrk");
+    trackLabel.parent(row);
+
+    sizeInput.input(() => {
+      let v = float(sizeInput.value());
+      if (!isNaN(v)) {
+        lineSettings[i].sizeFactor = constrain(v / 100, 0.2, 5.0);
+        redrawCanvas();
+      }
+    });
+
+    lhInput.input(() => {
+      let v = float(lhInput.value());
+      if (!isNaN(v)) {
+        lineSettings[i].lineHeightFactor = constrain(v / 100, 0.2, 5.0);
+        redrawCanvas();
+      }
+    });
+
+    trackInput.input(() => {
+      let v = float(trackInput.value());
+      if (!isNaN(v)) {
+        lineSettings[i].trackingDelta = constrain(v, -200, 200);
+        redrawCanvas();
+      }
+    });
+  }
 }
 
 // ----------------------------------------------------------
@@ -524,7 +616,6 @@ function onOrientationChange() {
 
 function handleAnimationState() {
   const anyAnim =
-    (animateCheckbox && animateCheckbox.checked()) ||
     (alternateSideCheckbox && alternateSideCheckbox.checked()) ||
     (rotateSidesCheckbox && rotateSidesCheckbox.checked()) ||
     (audioBeatCheckbox && audioBeatCheckbox.checked());
@@ -753,7 +844,31 @@ function drawSplitGlyph(
     ctx.restore();
   }
 
-  // which side gets which font
+  // quarter mode: A/B/A/B with audio-beat rotation only
+  if (mode === "quarters") {
+    const midX = (xMin + xMax) / 2;
+    const midY = (yMin + yMax) / 2;
+
+    const sm = rotateActive ? (sideMode % 4 + 4) % 4 : 0;
+
+    // quadrant index:
+    // 0 = TL, 1 = TR, 2 = BR, 3 = BL
+    const quads = [
+      { x: xMin - pad, y: yMin - pad, w: (midX - xMin) + pad, h: (midY - yMin) + pad },      // TL
+      { x: midX,       y: yMin - pad, w: (xMax + pad) - midX, h: (midY - yMin) + pad },      // TR
+      { x: midX,       y: midY,       w: (xMax + pad) - midX, h: (yMax + pad) - midY },      // BR
+      { x: xMin - pad, y: midY,       w: (midX - xMin) + pad, h: (yMax + pad) - midY }       // BL
+    ];
+
+    for (let q = 0; q < 4; q++) {
+      const useA = ((q + sm) % 2 === 0); // state0: TL=A,TR=B,BR=A,BL=B (A/B/A/B clockwise)
+      const quad = quads[q];
+      drawHalf(useA ? pathA : pathB, quad.x, quad.y, quad.w, quad.h);
+    }
+    return;
+  }
+
+  // which side gets which font, for vertical/horizontal
   let effMode = mode;
   let aOnLeft = true;
   let aOnTop = true;
@@ -773,14 +888,14 @@ function drawSplitGlyph(
       aOnLeft = false;
       aOnTop = true;
     } else {
-      effMode = "vertical";
+      effMode = "horizontal";
+      aOnTop = false;
       aOnLeft = true;
-      aOnTop = true;
     }
   } else {
     if (mode === "vertical") {
       aOnLeft = !swapSides;
-    } else {
+    } else if (mode === "horizontal") {
       aOnTop = !swapSides;
     }
   }
@@ -871,61 +986,46 @@ function drawBackground() {
 // ----------------------------------------------------------
 // SHAPING AND MAIN DRAW (always horizontal text)
 // ----------------------------------------------------------
-function shapeLinesHorizontal(txt, baseSize, tracking, margin) {
-  const lines = [];
-  let current = "";
-  let currentWidth = 0;
-  const maxWidth = width - margin * 2;
+function shapeLinesHorizontal(txt, baseSize, baseTracking, margin) {
+  const rawLines = txt.split("\n");
+  ensureLineSettings(rawLines.length);
 
-  function pushLine() {
-    lines.push({ text: current, width: currentWidth });
-    current = "";
-    currentWidth = 0;
-  }
+  const shaped = [];
 
-  for (let i = 0; i < txt.length; i++) {
-    const ch = txt[i];
+  for (let i = 0; i < rawLines.length; i++) {
+    const lineText = rawLines[i];
+    const ls = lineSettings[i];
 
-    if (ch === "\n") {
-      pushLine();
-      continue;
+    const sizeLine = baseSize * ls.sizeFactor;           // default = 1
+    const trackingLine = baseTracking + ls.trackingDelta; // default = 0
+    const lhFactor = ls.lineHeightFactor;                // default = 1
+
+    let w = 0;
+
+    for (let j = 0; j < lineText.length; j++) {
+      const ch = lineText[j];
+      const gA = otFontA.charToGlyph(ch);
+      const gB = otFontB.charToGlyph(ch);
+      if (!gA || !gB) continue;
+
+      const advA = glyphAdvance(gA, otFontA, sizeLine);
+      const advB = glyphAdvance(gB, otFontB, sizeLine);
+      const adv = (advA + advB) * 0.5;
+
+      if (j > 0) w += trackingLine;
+      w += adv;
     }
 
-    const gA = otFontA.charToGlyph(ch);
-    const gB = otFontB.charToGlyph(ch);
-    if (!gA || !gB) continue;
-
-    const advA = glyphAdvance(gA, otFontA, baseSize);
-    const advB = glyphAdvance(gB, otFontB, baseSize);
-    const adv = (advA + advB) * 0.5;
-
-    if (current.length === 0) {
-      if (adv > maxWidth) {
-        current = ch;
-        currentWidth = adv;
-        pushLine();
-      } else {
-        current = ch;
-        currentWidth = adv;
-      }
-    } else {
-      const widthNeeded = currentWidth + tracking + adv;
-      if (widthNeeded > maxWidth) {
-        pushLine();
-        current = ch;
-        currentWidth = adv;
-      } else {
-        current += ch;
-        currentWidth = widthNeeded;
-      }
-    }
+    shaped.push({
+      text: lineText,
+      width: w,
+      size: sizeLine,
+      tracking: trackingLine,
+      lhFactor: lhFactor
+    });
   }
 
-  if (current.length > 0) {
-    pushLine();
-  }
-
-  return lines;
+  return shaped;
 }
 
 function draw() {
@@ -956,18 +1056,19 @@ function draw() {
 
   const txt = textInput.value();
   const baseSize = sizeSlider.value();
-  const tracking = trackingSlider.value();
+  const baseTracking = trackingSlider.value();
   const alignMode = alignSelect.value();
-  const lineH = lineHeightSlider.value();
+  const globalLineH = lineHeightSlider.value();
 
+  // AUDIO / BEAT (rotation only — no cut animation)
   let beatMode =
     audioBeatCheckbox &&
     audioBeatCheckbox.checked() &&
     audio &&
     amplitudeAnalyzer;
-  let audioLevel = 0;
+
   if (beatMode) {
-    audioLevel = amplitudeAnalyzer.getLevel();
+    const audioLevel = amplitudeAnalyzer.getLevel();
     const sens = audioSensitivitySlider.value();
 
     if (avgLevel === 0) {
@@ -989,6 +1090,7 @@ function draw() {
       audioLevel > lastAudioLevel &&
       now - lastBeatTime > minBeatInterval
     ) {
+      // audio beat: toggle side flip + advance rotation index
       swapSidesBeat = !swapSidesBeat;
       sideModeBeat = (sideModeBeat + 1) % 4;
       lastBeatTime = now;
@@ -996,44 +1098,20 @@ function draw() {
     lastAudioLevel = audioLevel;
   }
 
-  let baseCut = cutSlider.value() / 100;
+  const mode = axisModeSelect.value();
+
+  // cut ratio always manual now; no animation
+  const baseCut = cutSlider.value() / 100;
   let cutRatio = baseCut;
 
-  if (!beatMode && animateCheckbox && animateCheckbox.checked()) {
-    const t = millis() * 0.001 * animSpeedSlider.value();
-    const amp = animAmplitudeSlider.value();
-    const delta = Math.sin(t) * amp;
-    cutRatio = constrain(baseCut + delta, 0.0, 1.0);
-  } else if (beatMode) {
-    cutRatio = baseCut;
+  // cut label text depending on mode
+  if (mode === "vertical") {
+    cutLabel.html("Cut position (0 = left, 100 = right)");
+  } else if (mode === "horizontal") {
+    cutLabel.html("Cut position (0 = bottom, 100 = top)");
+  } else {
+    cutLabel.html("Quarters (A/B/A/B) — cut ignored");
   }
-
-  let swapSidesGlobal = false;
-  if (!beatMode && alternateSideCheckbox && alternateSideCheckbox.checked()) {
-    const t2 = millis() * 0.001 * alternateSideSpeedSlider.value();
-    swapSidesGlobal = Math.sin(t2) > 0;
-  }
-
-  let rotateActive = false;
-  let sideModeGlobal = 0;
-  if (!beatMode && rotateSidesCheckbox && rotateSidesCheckbox.checked()) {
-    rotateActive = true;
-    const t3 = millis() * 0.001 * rotateSidesSpeedSlider.value();
-    sideModeGlobal = Math.floor(t3) % 4;
-  }
-
-  if (beatMode) {
-    swapSidesGlobal = swapSidesBeat;
-    rotateActive = true;
-    sideModeGlobal = sideModeBeat;
-  }
-
-  const mode = axisModeSelect.value();
-  cutLabel.html(
-    mode === "vertical"
-      ? "Cut position (0 = left, 100 = right)"
-      : "Cut position (0 = bottom, 100 = top)"
-  );
 
   const fillColor = fillPicker.value();
   const outlineColor = outlinePicker.value();
@@ -1047,14 +1125,42 @@ function draw() {
 
   const margin = baseSize * 0.4;
 
+  // side flip + rotation
+  let swapSidesGlobal = false;
+  let rotateActive = false;
+  let sideModeGlobal = 0;
+
+  if (!beatMode && alternateSideCheckbox && alternateSideCheckbox.checked()) {
+    const t2 = millis() * 0.001 * alternateSideSpeedSlider.value();
+    swapSidesGlobal = Math.sin(t2) > 0;
+  }
+
+  if (!beatMode && rotateSidesCheckbox && rotateSidesCheckbox.checked()) {
+    rotateActive = (mode !== "quarters"); // quarters: beat-only rotation
+    const t3 = millis() * 0.001 * rotateSidesSpeedSlider.value();
+    sideModeGlobal = Math.floor(t3) % 4;
+  }
+
+  if (beatMode) {
+    swapSidesGlobal = swapSidesBeat;
+    // for vertical/horizontal OR when rotateSidesCheckbox is on
+    // we still rotate; for quarters, rotation is beat-only
+    rotateActive = true;
+    sideModeGlobal = sideModeBeat;
+  }
+
   // ALWAYS HORIZONTAL TEXT
-  const shaped = shapeLinesHorizontal(txt, baseSize, tracking, margin);
+  const shaped = shapeLinesHorizontal(txt, baseSize, baseTracking, margin);
   let y = baseSize * 1.2;
 
   for (let li = 0; li < shaped.length; li++) {
     const line = shaped[li];
-    let x;
+    const sizeLine = line.size;
+    const trackingLine = line.tracking;
+    const lhLine = sizeLine * globalLineH * line.lhFactor;
+
     const maxWidth = posterWidth - 2 * margin;
+    let x;
 
     if (alignMode === "left") {
       x = margin;
@@ -1070,11 +1176,19 @@ function draw() {
       const gB = otFontB.charToGlyph(ch);
       if (!gA || !gB) continue;
 
+      // for quarters: rotation only from beat; ignore swapSides for mapping,
+      // but we still pass swapSidesGlobal (it is ignored in quarters branch).
+      const rotateForThisGlyph =
+        (mode === "quarters" ? beatMode : rotateActive);
+
+      const sideModeForThisGlyph =
+        (mode === "quarters" ? sideModeBeat : sideModeGlobal);
+
       drawSplitGlyph(
         ch,
         x,
         y,
-        baseSize,
+        sizeLine,
         mode,
         cutRatio,
         fillColor,
@@ -1083,18 +1197,18 @@ function draw() {
         joinType,
         blurAmount,
         swapSidesGlobal,
-        rotateActive,
-        sideModeGlobal
+        rotateForThisGlyph,
+        sideModeForThisGlyph
       );
 
-      const advA = glyphAdvance(gA, otFontA, baseSize);
-      const advB = glyphAdvance(gB, otFontB, baseSize);
+      const advA = glyphAdvance(gA, otFontA, sizeLine);
+      const advB = glyphAdvance(gB, otFontB, sizeLine);
       const adv = (advA + advB) * 0.5;
 
-      x += adv + tracking;
+      x += adv + trackingLine;
     }
 
-    y += baseSize * lineH;
+    y += lhLine;
   }
 
   pop();
