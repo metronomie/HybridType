@@ -1,6 +1,6 @@
 // ----------------------------------------------------------
 // HYBRID FONT POSTER TOOL
-// Default page: 1080 x 1920 (H=1920)
+// Default page: 1080 x 1560 (H=1560)
 // Default align: center
 // Default bg + fill: #00f900
 // Default outline color: #feffff, thickness: 40px
@@ -15,7 +15,8 @@
 // Background: solid, gradient, image, or VIDEO in random squares / mosaic
 // Video: 2 videos, alternating on parametric beat frequency
 //        inversion only affects video, not background color
-// PNG EXPORT: single frame + image sequence start/stop
+// PNG EXPORT: single frame + image sequence start/stop (REC/STOP style)
+//             "folder / prefix" is only part of filename (browser chooses folder)
 // ----------------------------------------------------------
 
 // opentype + p5.sound must be loaded in index.html
@@ -84,12 +85,10 @@ let videoBeatCounter = 0;     // counts detected beats
 let videoTileNeedsUpdate = false;
 let videoInvert = false;      // whether to invert video for this slow beat
 
-// PNG sequence export
+// PNG sequence export (REC/STOP)
 let exportSequence = false;
 let sequencePrefixInput;
-let sequenceFramesInput;
 let sequenceCurrentFrame = 0;
-let sequenceTotalFrames = 0;
 
 // ----------------------------------------------------------
 // PRELOAD
@@ -110,7 +109,7 @@ function preload() {
 // ----------------------------------------------------------
 function setup() {
   posterWidth = 1080;
-  posterHeight = 1920; // default height 1920
+  posterHeight = 1560; // default height 1560
 
   const main = createDiv();
   main.style("display", "flex");
@@ -142,8 +141,8 @@ function setup() {
   canvasHolder.style("align-items", "center");
   canvasHolder.style("justify-content", "center");
   canvasHolder.style("background", "#f5f5f5");
-  canvasHolder.style("overflow", "auto");     // scroll poster
-  canvasHolder.style("max-height", "100vh");  // stay in viewport
+  canvasHolder.style("overflow", "auto");
+  canvasHolder.style("max-height", "100vh");
 
   const cnv = createCanvas(posterWidth, posterHeight);
   cnv.parent(canvasHolder);
@@ -315,7 +314,7 @@ function setup() {
   trackingSlider.parent(textSec);
   trackingSlider.input(redrawCanvas);
 
-  const perLineLabel = createSpan("Per line sliders: size %, LH %, spacing Δ");
+  const perLineLabel = createSpan("Per line sliders: size %, LH %, spacing delta");
   perLineLabel.parent(textSec);
   perLineLabel.style("margin-top", "4px");
   perLineLabel.style("font-size", "11px");
@@ -512,16 +511,10 @@ function setup() {
   savePngBtn.parent(exportSec);
   savePngBtn.mousePressed(() => saveCanvas("hybrid_poster", "png"));
 
-  exportSec.child(createSpan("Sequence prefix"));
+  exportSec.child(createSpan("Sequence folder / prefix (filename only)"));
   sequencePrefixInput = createInput("seq_");
   sequencePrefixInput.parent(exportSec);
   sequencePrefixInput.style("width", "100%");
-
-  exportSec.child(createSpan("Number of frames"));
-  sequenceFramesInput = createInput("120");
-  sequenceFramesInput.parent(exportSec);
-  sequenceFramesInput.attribute("type", "number");
-  sequenceFramesInput.style("width", "100%");
 
   const seqButtonsRow = createDiv();
   seqButtonsRow.parent(exportSec);
@@ -1112,7 +1105,7 @@ function drawBackground() {
   const mode = bgModeSelect.value();
 
   if (mode === "video") {
-    // colored background behind video
+    // colored background behind video only
     noStroke();
     fill(bgColor1Picker.value());
     rect(0, 0, width, height);
@@ -1287,12 +1280,9 @@ function shapeLinesHorizontal(txt, baseSize, baseTracking, margin) {
 }
 
 // ----------------------------------------------------------
-// PNG SEQUENCE EXPORT
+// PNG SEQUENCE EXPORT (REC/STOP)
 // ----------------------------------------------------------
 function startSequenceExport() {
-  const frames = int(sequenceFramesInput.value());
-  if (isNaN(frames) || frames <= 0) return;
-  sequenceTotalFrames = frames;
   sequenceCurrentFrame = 0;
   exportSequence = true;
   handleAnimationState();
@@ -1301,6 +1291,18 @@ function startSequenceExport() {
 function stopSequenceExport() {
   exportSequence = false;
   handleAnimationState();
+}
+
+function saveSequenceFrame() {
+  const prefixRaw = sequencePrefixInput ? sequencePrefixInput.value() : "seq_";
+  const prefixClean = prefixRaw && prefixRaw.length > 0 ? prefixRaw : "seq_";
+
+  // sanitize: remove characters that are invalid in filenames on most OS
+  const safePrefix = prefixClean.replace(/[\\/:*?"<>|]/g, "_");
+
+  const idxStr = nf(sequenceCurrentFrame, 4); // 0000, 0001, ...
+  saveCanvas(safePrefix + idxStr, "png");
+  sequenceCurrentFrame++;
 }
 
 // ----------------------------------------------------------
@@ -1329,7 +1331,6 @@ function draw() {
     pop();
     pop();
 
-    // still export empty if user triggered sequence
     if (exportSequence) {
       saveSequenceFrame();
     }
@@ -1360,8 +1361,8 @@ function draw() {
       avgLevel = lerp(avgLevel, audioLevel, smoothing);
     }
 
-    const margin = 0.03 + (1 - sens) * 0.12;
-    const beatThreshold = avgLevel + margin;
+    const marginBeat = 0.03 + (1 - sens) * 0.12;
+    const beatThreshold = avgLevel + marginBeat;
 
     const now = millis();
     const minBeatInterval = 150 + (1 - sens) * 350;
@@ -1398,7 +1399,7 @@ function draw() {
   } else if (mode === "horizontal") {
     cutLabel.html("Cut position (0 = bottom, 100 = top)");
   } else {
-    cutLabel.html("Quarters (A/B/A/B) – cut ignored");
+    cutLabel.html("Quarters (A/B/A/B) - cut ignored");
   }
 
   const fillColor = fillPicker.value();
@@ -1494,23 +1495,7 @@ function draw() {
 
   pop();
 
-  // sequence export (PNG)
   if (exportSequence) {
     saveSequenceFrame();
-  }
-}
-
-// save one frame of the PNG sequence
-function saveSequenceFrame() {
-  const prefix = sequencePrefixInput ? sequencePrefixInput.value() : "seq_";
-  const safePrefix = prefix && prefix.length > 0 ? prefix : "seq_";
-  const idxStr = nf(sequenceCurrentFrame, 4); // 0000,0001,...
-
-  saveCanvas(safePrefix + idxStr, "png");
-
-  sequenceCurrentFrame++;
-  if (sequenceCurrentFrame >= sequenceTotalFrames) {
-    exportSequence = false;
-    handleAnimationState();
   }
 }
