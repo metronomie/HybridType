@@ -15,9 +15,10 @@
 // Background: solid, gradient, image, or VIDEO in random squares / mosaic
 // Video: 2 videos, alternating on parametric beat frequency
 //        inversion only affects video, not background color
+// Video randomness slider: controls size + distribution of tiles
+// Flash vector: SVG/PNG overlay on beats, with size, frequency, rotation
 // PNG EXPORT: single frame + image sequence start/stop (REC/STOP style)
-//             "folder / prefix" is only part of filename (browser chooses folder)
-// VIDEO EXPORT: WebM + audio via MediaRecorder (Start/Stop buttons)
+// VIDEO EXPORT: WebM + audio via MediaRecorder (Start/Stop), high bitrate
 // ----------------------------------------------------------
 
 // opentype + p5.sound must be loaded in index.html
@@ -66,6 +67,7 @@ let bgVideoInput1 = null;
 let bgVideoInput2 = null;
 let videoTileModeSelect = null;      // "random" or "mosaic"
 let videoAltBeatsSlider = null;      // beat frequency for alternation
+let videoRandomnessSlider = null;    // 0..1: distribution + size randomness
 let activeVideoIndex = 0;            // 0 = video1, 1 = video2
 let mosaicBuffer = null;             // offscreen buffer for mosaic inversion
 
@@ -97,6 +99,15 @@ let canvasStream = null;
 let mediaRecorder = null;
 let recordedChunks = [];
 let isRecordingVideo = false;
+
+// FLASH VECTOR
+let flashVectorImg = null;
+let flashFileInput;
+let flashFrequencySlider;
+let flashSizeSlider;
+let flashRotateCheckbox;
+let flashActive = false;
+let flashPhase = 0;
 
 // ----------------------------------------------------------
 // PRELOAD
@@ -463,12 +474,44 @@ function setup() {
   videoTileModeSelect.option("Random tiles", "random");
   videoTileModeSelect.option("Mosaic", "mosaic");
   videoTileModeSelect.selected("random");
-  videoTileModeSelect.changed(redrawCanvas);
+  videoTileModeSelect.changed(() => {
+    videoTileNeedsUpdate = true;
+    redrawCanvas();
+  });
 
   bgSec.child(createSpan("Video alternation (beats)"));
   videoAltBeatsSlider = createSlider(1, 16, 4, 1);
   videoAltBeatsSlider.parent(bgSec);
   videoAltBeatsSlider.input(redrawCanvas);
+
+  bgSec.child(createSpan("Video randomness (0 = grid, 1 = chaos)"));
+  videoRandomnessSlider = createSlider(0.0, 1.0, 1.0, 0.01);
+  videoRandomnessSlider.parent(bgSec);
+  videoRandomnessSlider.input(() => {
+    videoTileNeedsUpdate = true;
+    redrawCanvas();
+  });
+
+  // FLASH VECTOR
+  const flashSec = section("Flash vector");
+
+  flashSec.child(createSpan("Vector image (SVG/PNG)"));
+  flashFileInput = createFileInput(handleFlashVectorFile);
+  flashFileInput.parent(flashSec);
+
+  flashSec.child(createSpan("Flash frequency (beats)"));
+  flashFrequencySlider = createSlider(1, 16, 4, 1);
+  flashFrequencySlider.parent(flashSec);
+  flashFrequencySlider.input(redrawCanvas);
+
+  flashSec.child(createSpan("Flash size (% of min canvas)"));
+  flashSizeSlider = createSlider(10, 200, 80, 1);
+  flashSizeSlider.parent(flashSec);
+  flashSizeSlider.input(redrawCanvas);
+
+  flashRotateCheckbox = createCheckbox("Rotate flash vector", false);
+  flashRotateCheckbox.parent(flashSec);
+  flashRotateCheckbox.changed(redrawCanvas);
 
   // ANIMATION
   const animSec = section("Animation");
@@ -871,6 +914,18 @@ function handleBgVideoFile(file, index) {
   redrawCanvas();
 }
 
+function handleFlashVectorFile(file) {
+  if (!file) return;
+  if (!file.type.startsWith("image") && !file.name.toLowerCase().endsWith(".svg")) return;
+
+  loadImage(file.data, img => {
+    flashVectorImg = img;
+    flashActive = false;
+    flashPhase = 0;
+    redrawCanvas();
+  });
+}
+
 function glyphAdvance(glyph, font, sizePx) {
   const upm = font.unitsPerEm || 1000;
   const aw = glyph.advanceWidth || upm;
@@ -1114,16 +1169,33 @@ function drawSplitGlyph(
 // ----------------------------------------------------------
 function updateVideoTiles() {
   videoTiles = [];
-  const tileCount = 6;
 
-  const minSize = min(width, height) * 0.15;
-  const maxSize = min(width, height) * 0.35;
+  const randomness = videoRandomnessSlider ? videoRandomnessSlider.value() : 1.0;
 
-  for (let i = 0; i < tileCount; i++) {
-    const s = random(minSize, maxSize);
-    const x = random(-s * 0.2, width - s * 0.8);
-    const y = random(-s * 0.2, height - s * 0.8);
-    videoTiles.push({ x, y, w: s, h: s });
+  const baseCols = 3;
+  const baseRows = 2;
+  const cellW = width / baseCols;
+  const cellH = height / baseRows;
+
+  const baseSize = min(cellW, cellH) * 0.9;
+
+  for (let row = 0; row < baseRows; row++) {
+    for (let col = 0; col < baseCols; col++) {
+      let centerX = (col + 0.5) * cellW;
+      let centerY = (row + 0.5) * cellH;
+
+      const jitterPos = randomness * 0.7;
+      const jitterX = (random(-0.5, 0.5) * cellW) * jitterPos;
+      const jitterY = (random(-0.5, 0.5) * cellH) * jitterPos;
+
+      const sizeJitterFactor = lerp(1.0, random(0.5, 1.6), randomness);
+      const s = baseSize * sizeJitterFactor;
+
+      const x = centerX - s / 2 + jitterX;
+      const y = centerY - s / 2 + jitterY;
+
+      videoTiles.push({ x, y, w: s, h: s });
+    }
   }
 }
 
@@ -1430,6 +1502,47 @@ function stopVideoRecording() {
 }
 
 // ----------------------------------------------------------
+// FLASH VECTOR DRAW
+// ----------------------------------------------------------
+function drawFlashVector() {
+  if (!flashActive || !flashVectorImg) return;
+
+  const dt = deltaTime || 16;
+  flashPhase += dt / 400.0; // flash lasts ~400ms
+
+  const alpha = 255 * (1 - flashPhase);
+  if (alpha <= 0) {
+    flashActive = false;
+    return;
+  }
+
+  push();
+  translate(width / 2, height / 2);
+
+  const sizePercent = flashSizeSlider ? flashSizeSlider.value() : 80;
+  const sFactor = sizePercent / 100.0;
+  const baseSize = min(width, height) * sFactor;
+
+  const imgW = flashVectorImg.width;
+  const imgH = flashVectorImg.height;
+  const maxDim = max(imgW, imgH);
+  const sc = baseSize / maxDim;
+
+  scale(sc);
+
+  if (flashRotateCheckbox && flashRotateCheckbox.checked()) {
+    const angle = TWO_PI * flashPhase;
+    rotate(angle);
+  }
+
+  imageMode(CENTER);
+  tint(255, alpha);
+  image(flashVectorImg, 0, 0);
+
+  pop();
+}
+
+// ----------------------------------------------------------
 // DRAW
 // ----------------------------------------------------------
 function draw() {
@@ -1508,6 +1621,15 @@ function draw() {
         videoInvert = !videoInvert;
         if (bgVideo1 && bgVideo2) {
           activeVideoIndex = 1 - activeVideoIndex;
+        }
+      }
+
+      // flash vector on its own beat grid
+      if (flashVectorImg && flashFrequencySlider) {
+        const flashBeats = max(1, int(flashFrequencySlider.value()));
+        if (videoBeatCounter % flashBeats === 0) {
+          flashActive = true;
+          flashPhase = 0;
         }
       }
     }
@@ -1616,6 +1738,9 @@ function draw() {
 
     y += lhLine;
   }
+
+  // flash vector on top of everything
+  drawFlashVector();
 
   pop();
 
