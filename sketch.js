@@ -1334,7 +1334,7 @@ function saveSequenceFrame() {
 }
 
 // ----------------------------------------------------------
-// VIDEO RECORDING (WEBM + AUDIO)
+// VIDEO RECORDING (WEBM + AUDIO, HIGH QUALITY)
 // ----------------------------------------------------------
 function startVideoRecording() {
   if (isRecordingVideo) return;
@@ -1342,6 +1342,8 @@ function startVideoRecording() {
     console.warn("MediaRecorder not supported in this browser.");
     return;
   }
+
+  // create or refresh canvas stream
   if (!canvasStream && mainCanvas && mainCanvas.elt && mainCanvas.elt.captureStream) {
     canvasStream = mainCanvas.elt.captureStream(30);
   }
@@ -1350,8 +1352,20 @@ function startVideoRecording() {
     return;
   }
 
-  let finalStream = canvasStream;
+  // Force full poster resolution in the recording
+  try {
+    const track = canvasStream.getVideoTracks()[0];
+    track.applyConstraints({
+      width: posterWidth,
+      height: posterHeight,
+      frameRate: 30
+    });
+  } catch (e) {
+    console.warn("Constraints not supported:", e);
+  }
 
+  // Attach audio if possible
+  let finalStream = canvasStream;
   try {
     if (audio) {
       const audioCtx = getAudioContext();
@@ -1367,19 +1381,22 @@ function startVideoRecording() {
     console.warn("Could not attach audio to MediaStream:", e);
   }
 
-  let mimeType = "video/webm;codecs=vp9,opus";
-  if (!MediaRecorder.isTypeSupported(mimeType)) {
-    mimeType = "video/webm";
-  }
+  // High-quality VP9 WebM
+  const options = {
+    mimeType: "video/webm; codecs=vp9",
+    videoBitsPerSecond: 80_000_000,  // 80 Mbps ~ visually near-lossless
+    audioBitsPerSecond: 256_000
+  };
 
   try {
-    mediaRecorder = new MediaRecorder(finalStream, { mimeType });
+    mediaRecorder = new MediaRecorder(finalStream, options);
   } catch (e) {
     console.error("Error creating MediaRecorder:", e);
     return;
   }
 
   recordedChunks = [];
+
   mediaRecorder.ondataavailable = ev => {
     if (ev.data && ev.data.size > 0) {
       recordedChunks.push(ev.data);
@@ -1392,7 +1409,7 @@ function startVideoRecording() {
     const a = document.createElement("a");
     a.style.display = "none";
     a.href = url;
-    a.download = "hybrid_poster_video.webm"; // convert to mp4 later if needed
+    a.download = "hybrid_poster_video_HIGH_QUALITY.webm";
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -1402,7 +1419,7 @@ function startVideoRecording() {
 
   mediaRecorder.start();
   isRecordingVideo = true;
-  console.log("Video recording started.");
+  console.log("HQ Video recording started.");
 }
 
 function stopVideoRecording() {
