@@ -778,6 +778,12 @@ function redrawCanvas() {
 // ----------------------------------------------------------
 function toggleAudio() {
   if (!audio) return;
+
+  const ac = getAudioContext();
+  if (ac.state !== "running") {
+    ac.resume();
+  }
+
   if (audio.isPlaying()) {
     audio.pause();
     audioPlayButton.html("Play audio");
@@ -792,19 +798,35 @@ function toggleAudio() {
 }
 
 function handleAudioFile(file) {
-  if (!file || !file.type.startsWith("audio")) return;
+  // p5.File from createFileInput
+  if (!file || !file.file) return;
+
+  // Stop and disconnect old audio if any
   if (audio) {
     audio.stop();
+    try {
+      audio.disconnect();
+    } catch (e) {}
   }
-  audio = loadSound(file.data, () => {
-    if (!amplitudeAnalyzer) {
-      amplitudeAnalyzer = new p5.Amplitude();
-    }
-    amplitudeAnalyzer.setInput(audio);
-    audioPlayButton.html("Play audio");
-  });
-}
 
+  const audioFile = file.file; // native File object from the input
+
+  // Load new sound from the File object
+  audio = loadSound(
+    audioFile,
+    () => {
+      if (!amplitudeAnalyzer) {
+        amplitudeAnalyzer = new p5.Amplitude();
+      }
+      amplitudeAnalyzer.setInput(audio);
+      audioPlayButton.html("Play audio");
+      console.log("Custom audio loaded:", audioFile.name);
+    },
+    err => {
+      console.error("Error loading custom audio:", err);
+    }
+  );
+}
 // ----------------------------------------------------------
 // FONT / BG FILE HANDLERS
 // ----------------------------------------------------------
